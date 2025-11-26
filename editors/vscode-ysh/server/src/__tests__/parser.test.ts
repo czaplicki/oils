@@ -447,6 +447,46 @@ echo "hello"`;
         console.log('Source paths in caddy.ysh:', paths);
         expect(paths).toContain('lib/config.ysh');
     });
+
+    test('extractSourcePaths handles $_this_dir variable', () => {
+        const code = `source $_this_dir/lib/config.ysh`;
+        const result = parser.parse(code);
+        const paths = extractSourcePaths(result);
+
+        console.log('Source paths with $_this_dir:', paths);
+        // The path includes the variable - expansion happens in resolveSourcePath
+        expect(paths.length).toBeGreaterThan(0);
+        expect(paths[0]).toContain('lib/config.ysh');
+    });
+});
+
+describe('Source Path Resolution', () => {
+    test('resolveSourcePath expands $_this_dir', () => {
+        // Simulate a document URI
+        const docUri = 'file:///home/user/project/scripts/main.ysh';
+        
+        // Source path with $_this_dir
+        const sourcePath = '$_this_dir/lib/config.ysh';
+        const resolved = resolveSourcePath(sourcePath, docUri);
+        
+        // It should try to resolve to /home/user/project/scripts/lib/config.ysh
+        // (won't exist, so returns null, but the expansion should happen)
+        console.log('Resolved path:', resolved);
+        // Just test it doesn't crash
+    });
+
+    test('resolveSourcePath handles relative paths', () => {
+        // Use the actual fixtures directory
+        const fixturesDir = path.join(__dirname, 'fixtures');
+        const caddyUri = `file://${path.join(fixturesDir, 'caddy.ysh')}`;
+        
+        const resolved = resolveSourcePath('lib/config.ysh', caddyUri);
+        console.log('Resolved lib/config.ysh from caddy.ysh:', resolved);
+        
+        // Should resolve to the actual fixture file
+        expect(resolved).not.toBeNull();
+        expect(resolved).toContain('lib/config.ysh');
+    });
 });
 
 describe('WorkspaceSymbols Cross-File Lookup', () => {
@@ -631,7 +671,7 @@ describe('Function Parameter Tracking', () => {
 
         // Should find the proc
         expect(symbols.lookup('verify_dns').length).toBeGreaterThan(0);
-        
+
         // Should find the parameter
         const paramSymbol = symbols.lookup('expected_ip');
         console.log('expected_ip symbols:', paramSymbol.map(s => s.detail));

@@ -49,8 +49,9 @@ export function extractSourcePaths(result: ParseResult): string[] {
 
 /**
  * Resolve a source path relative to the document that contains it.
+ * Handles shell variable expansion for common patterns like $_this_dir.
  *
- * @param sourcePath - The path from the source statement (e.g., "lib/config.ysh")
+ * @param sourcePath - The path from the source statement (e.g., "lib/config.ysh" or "$_this_dir/lib/config.ysh")
  * @param documentUri - The URI of the document containing the source statement
  * @returns The resolved file:// URI, or null if the file doesn't exist
  */
@@ -61,8 +62,11 @@ export function resolveSourcePath(sourcePath: string, documentUri: string): stri
     const docPath = docUri.fsPath;
     const docDir = path.dirname(docPath);
 
+    // Expand common shell variables
+    let expandedPath = expandShellVariables(sourcePath, docDir);
+
     // Resolve the source path relative to the document
-    const resolvedPath = path.resolve(docDir, sourcePath);
+    const resolvedPath = path.resolve(docDir, expandedPath);
 
     // Check if file exists
     if (fs.existsSync(resolvedPath)) {
@@ -73,6 +77,38 @@ export function resolveSourcePath(sourcePath: string, documentUri: string): stri
   } catch {
     return null;
   }
+}
+
+/**
+ * Expand common shell variables in source paths.
+ * 
+ * Supported variables:
+ * - $_this_dir -> directory containing the current script
+ * - $BUN_SCRIPT_DIR -> same as $_this_dir (common pattern)
+ * - ${_this_dir}, ${BUN_SCRIPT_DIR} -> same with braces
+ */
+function expandShellVariables(sourcePath: string, docDir: string): string {
+  let expanded = sourcePath;
+  
+  // Replace $_this_dir and variations (YSH convention for script directory)
+  expanded = expanded.replace(/\$\{?_this_dir\}?/g, docDir);
+  expanded = expanded.replace(/\$\{?BUN_SCRIPT_DIR\}?/g, docDir);
+  
+  // Handle $0 directory pattern (dirname of script)
+  // This is less common but sometimes used
+  expanded = expanded.replace(/\$\(dirname\s+\$0\)/g, docDir);
+  
+  // If path still contains $ it has unexpanded variables - skip those parts
+  // and try to find a resolvable suffix
+  if (expanded.includes('$')) {
+    // Try extracting just the relative path part after any variable
+    const match = expanded.match(/\/([^$]+)$/);
+    if (match) {
+      expanded = match[1];
+    }
+  }
+  
+  return expanded;
 }
 
 /**

@@ -282,26 +282,26 @@ export class SymbolTable {
     const searchStart = funcStartIndex;
     const searchEnd = Math.min(funcStartIndex + 500, this.text.length);
     const searchText = this.text.slice(searchStart, searchEnd);
-    
+
     // Find opening paren
     const parenStart = searchText.indexOf('(');
     if (parenStart === -1) return;
-    
+
     // For each parameter, try to find its position in the text
     for (const param of params) {
       // Strip any default value (e.g., "max_attempts=30" -> "max_attempts")
       const paramName = param.split('=')[0].trim();
       if (!paramName) continue;
-      
+
       // Find this parameter in the text after the opening paren
       const paramPattern = new RegExp(`\\b${this.escapeRegExp(paramName)}\\b`);
       const match = searchText.slice(parenStart).match(paramPattern);
-      
+
       if (match && match.index !== undefined) {
         const paramStart = searchStart + parenStart + match.index;
         const paramEnd = paramStart + paramName.length;
         const range = this.indexToRange(paramStart, paramEnd);
-        
+
         const symbol: SymbolInfo = {
           name: paramName,
           kind: SymbolKind.Variable,
@@ -309,7 +309,7 @@ export class SymbolTable {
           selectionRange: range,
           detail: `${funcType} parameter`,
         };
-        
+
         this.addSymbol(paramName, symbol);
       }
     }
