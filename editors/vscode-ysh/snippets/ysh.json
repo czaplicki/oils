@@ -1,0 +1,192 @@
+{
+  "Procedure Definition": {
+    "prefix": "proc",
+    "body": [
+      "proc ${1:name} (${2:params}) {",
+      "\t$0",
+      "}"
+    ],
+    "description": "Define a YSH procedure"
+  },
+  "Function Definition": {
+    "prefix": "func",
+    "body": [
+      "func ${1:name}(${2:params}) {",
+      "\treturn $0",
+      "}"
+    ],
+    "description": "Define a YSH function"
+  },
+  "Variable Declaration": {
+    "prefix": "var",
+    "body": [
+      "var ${1:name} = ${2:value}"
+    ],
+    "description": "Declare a YSH variable"
+  },
+  "Constant Declaration": {
+    "prefix": "const",
+    "body": [
+      "const ${1:NAME} = ${2:value}"
+    ],
+    "description": "Declare a YSH constant"
+  },
+  "Set Variable": {
+    "prefix": "setvar",
+    "body": [
+      "setvar ${1:name} = ${2:value}"
+    ],
+    "description": "Set a YSH variable"
+  },
+  "If Statement (YSH)": {
+    "prefix": "if",
+    "body": [
+      "if (${1:condition}) {",
+      "\t$0",
+      "}"
+    ],
+    "description": "YSH-style if statement"
+  },
+  "If-Else Statement (YSH)": {
+    "prefix": "ife",
+    "body": [
+      "if (${1:condition}) {",
+      "\t$2",
+      "} else {",
+      "\t$0",
+      "}"
+    ],
+    "description": "YSH-style if-else statement"
+  },
+  "For Loop (YSH)": {
+    "prefix": "for",
+    "body": [
+      "for ${1:item} in (${2:iterable}) {",
+      "\t$0",
+      "}"
+    ],
+    "description": "YSH-style for loop"
+  },
+  "For Loop with Range": {
+    "prefix": "forr",
+    "body": [
+      "for ${1:i} in (${2:0} ..< ${3:10}) {",
+      "\t$0",
+      "}"
+    ],
+    "description": "YSH for loop with range"
+  },
+  "While Loop (YSH)": {
+    "prefix": "while",
+    "body": [
+      "while (${1:condition}) {",
+      "\t$0",
+      "}"
+    ],
+    "description": "YSH-style while loop"
+  },
+  "Case Statement (YSH)": {
+    "prefix": "case",
+    "body": [
+      "case (${1:value}) {",
+      "\t${2:pattern} {",
+      "\t\t$0",
+      "\t}",
+      "}"
+    ],
+    "description": "YSH-style case statement"
+  },
+  "List Literal": {
+    "prefix": "list",
+    "body": [
+      "[${1:item1}, ${2:item2}]"
+    ],
+    "description": "YSH list literal"
+  },
+  "Dict Literal": {
+    "prefix": "dict",
+    "body": [
+      "{${1:key}: ${2:value}}"
+    ],
+    "description": "YSH dict literal"
+  },
+  "Word Array": {
+    "prefix": "words",
+    "body": [
+      ":|${1:word1} ${2:word2}|"
+    ],
+    "description": "YSH word array literal"
+  },
+  "Command Substitution": {
+    "prefix": "cmd",
+    "body": [
+      "\\$(${1:command})"
+    ],
+    "description": "Command substitution"
+  },
+  "Expression Substitution": {
+    "prefix": "expr",
+    "body": [
+      "\\$[${1:expression}]"
+    ],
+    "description": "Expression substitution"
+  },
+  "Eggex Pattern": {
+    "prefix": "eggex",
+    "body": [
+      "/ ${1:pattern} /"
+    ],
+    "description": "Eggex regular expression"
+  },
+  "Multiline String (Single)": {
+    "prefix": "str3",
+    "body": [
+      "'''",
+      "${1:content}",
+      "'''"
+    ],
+    "description": "Multiline single-quoted string"
+  },
+  "Multiline String (Double)": {
+    "prefix": "str3d",
+    "body": [
+      "\"\"\"",
+      "${1:content}",
+      "\"\"\""
+    ],
+    "description": "Multiline double-quoted string"
+  },
+  "Try-Catch": {
+    "prefix": "try",
+    "body": [
+      "try {",
+      "\t$0",
+      "}",
+      "echo \"Status: \\$_status\""
+    ],
+    "description": "YSH try block with status check"
+  },
+  "Main Guard": {
+    "prefix": "main",
+    "body": [
+      "proc main {",
+      "\t$0",
+      "}",
+      "",
+      "if (is-main) {",
+      "\tmain",
+      "}"
+    ],
+    "description": "Main procedure with guard"
+  },
+  "Shebang": {
+    "prefix": "shebang",
+    "body": [
+      "#!/usr/bin/env ysh",
+      "",
+      "$0"
+    ],
+    "description": "YSH shebang line"
+  }
+}
+

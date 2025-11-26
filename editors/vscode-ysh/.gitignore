@@ -1,0 +1,20 @@
+out/
+node_modules/
+*.vsix
+.vscode-test/
+*.tsbuildinfo
+server/out/
+tree-sitter-ysh/build/
+tree-sitter-ysh/prebuilds/
+tree-sitter-ysh/src/parser.c
+tree-sitter-ysh/src/tree_sitter/
+tree-sitter-ysh/src/node-types.json
+tree-sitter-ysh/src/grammar.json
+
+# Nix
+result
+result-*
+
+# direnv
+.direnv/
+

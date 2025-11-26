@@ -1,0 +1,89 @@
+================================================================================
+Procedure definition
+================================================================================
+
+proc greet (name) {
+  echo "Hello, $name"
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (proc_definition
+    (identifier)
+    (proc_signature
+      (param_list
+        (param (identifier))))
+    (brace_group
+      (simple_command
+        (command_name (word (bare_word)))
+        (word (string (double_quoted_string
+          (variable_substitution (simple_variable)))))))))
+
+================================================================================
+Function definition
+================================================================================
+
+func add(a, b) {
+  return (a + b)
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (func_definition
+    (identifier)
+    (param_list
+      (param (identifier))
+      (param (identifier)))
+    (brace_group
+      (control_flow
+        (parenthesized_expression
+          (binary_expression
+            (identifier)
+            (identifier)))))))
+
+================================================================================
+Shell function definition
+================================================================================
+
+myfunc() {
+  echo hello
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_definition
+    (identifier)
+    (brace_group
+      (simple_command
+        (command_name (word (bare_word)))
+        (word (bare_word))))))
+
+================================================================================
+Proc with multiple parameters
+================================================================================
+
+proc copy (src, dst; force=false) {
+  echo "Copying $src to $dst"
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (proc_definition
+    (identifier)
+    (proc_signature
+      (param_list
+        (param (identifier))
+        (param (identifier))
+        (named_param (identifier)
+          (boolean_literal))))
+    (brace_group
+      (simple_command
+        (command_name (word (bare_word)))
+        (word (string (double_quoted_string
+          (variable_substitution (simple_variable))
+          (variable_substitution (simple_variable)))))))))
+

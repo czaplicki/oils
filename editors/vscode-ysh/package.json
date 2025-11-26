@@ -1,0 +1,156 @@
+{
+  "name": "ysh-language",
+  "displayName": "YSH (Oils Shell)",
+  "description": "Language support for YSH - the new shell language from Oils",
+  "version": "0.1.0",
+  "publisher": "oilshell",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/oilshell/oil.git",
+    "directory": "editors/vscode-ysh"
+  },
+  "bugs": {
+    "url": "https://github.com/oilshell/oil/issues"
+  },
+  "homepage": "https://www.oilshell.org/",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters",
+    "Formatters"
+  ],
+  "keywords": [
+    "ysh",
+    "oils",
+    "shell",
+    "bash",
+    "scripting"
+  ],
+  "activationEvents": [
+    "onLanguage:ysh",
+    "onLanguage:osh"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "ysh",
+        "aliases": [
+          "YSH",
+          "Oils Shell",
+          "ysh"
+        ],
+        "extensions": [
+          ".ysh"
+        ],
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./images/ysh-icon.png",
+          "dark": "./images/ysh-icon.png"
+        }
+      },
+      {
+        "id": "osh",
+        "aliases": [
+          "OSH",
+          "Oil Shell (OSH)",
+          "osh"
+        ],
+        "extensions": [
+          ".osh"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "ysh",
+        "scopeName": "source.ysh",
+        "path": "./syntaxes/ysh.tmLanguage.json"
+      },
+      {
+        "language": "osh",
+        "scopeName": "source.ysh",
+        "path": "./syntaxes/ysh.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "YSH",
+      "properties": {
+        "ysh.enable": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable YSH language features"
+        },
+        "ysh.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Traces the communication between VS Code and the language server."
+        },
+        "ysh.oilsPath": {
+          "type": "string",
+          "default": "oils-for-unix",
+          "description": "Path to the Oils interpreter executable"
+        },
+        "ysh.maxNumberOfProblems": {
+          "type": "number",
+          "default": 100,
+          "description": "Maximum number of problems to report per file"
+        },
+        "ysh.lint.enable": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable linting"
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "ysh.restartServer",
+        "title": "YSH: Restart Language Server"
+      },
+      {
+        "command": "ysh.showParseTree",
+        "title": "YSH: Show Parse Tree"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "ysh",
+        "path": "./snippets/ysh.json"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -b",
+    "watch": "tsc -b -w",
+    "lint": "eslint src --ext ts",
+    "pretest": "npm run compile && npm run lint",
+    "test": "node ./out/test/runTest.js",
+    "package": "vsce package",
+    "publish": "vsce publish"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/vscode": "^1.75.0",
+    "@typescript-eslint/eslint-plugin": "^6.13.0",
+    "@typescript-eslint/parser": "^6.13.0",
+    "@vscode/vsce": "^2.22.0",
+    "eslint": "^8.54.0",
+    "typescript": "^5.3.0"
+  }
+}
+

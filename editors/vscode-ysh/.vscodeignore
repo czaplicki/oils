@@ -1,0 +1,15 @@
+.vscode/**
+.vscode-test/**
+src/**
+server/src/**
+tree-sitter-ysh/src/**
+tree-sitter-ysh/bindings/**
+**/*.ts
+**/*.map
+.gitignore
+**/tsconfig.json
+**/*.tsbuildinfo
+node_modules/**
+server/node_modules/**
+tree-sitter-ysh/node_modules/**
+

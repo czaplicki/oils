@@ -1,0 +1,123 @@
+================================================================================
+If statement (YSH style)
+================================================================================
+
+if (x > 0) {
+  echo "positive"
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (if_statement
+    (parenthesized_expression
+      (comparison_expression
+        (identifier)
+        (number (integer))))
+    (brace_group
+      (simple_command
+        (command_name (word (bare_word)))
+        (word (string (double_quoted_string)))))))
+
+================================================================================
+If-else statement
+================================================================================
+
+if (x > 0) {
+  echo "positive"
+} else {
+  echo "non-positive"
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (if_statement
+    (parenthesized_expression
+      (comparison_expression
+        (identifier)
+        (number (integer))))
+    (brace_group
+      (simple_command
+        (command_name (word (bare_word)))
+        (word (string (double_quoted_string)))))
+    (else_clause
+      (brace_group
+        (simple_command
+          (command_name (word (bare_word)))
+          (word (string (double_quoted_string))))))))
+
+================================================================================
+For loop
+================================================================================
+
+for item in (mylist) {
+  echo $item
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (for_statement
+    (identifier)
+    (parenthesized_expression (identifier))
+    (brace_group
+      (simple_command
+        (command_name (word (bare_word)))
+        (word (variable_substitution (simple_variable)))))))
+
+================================================================================
+While loop
+================================================================================
+
+while (x < 10) {
+  setvar x += 1
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (while_statement
+    (parenthesized_expression
+      (comparison_expression
+        (identifier)
+        (number (integer))))
+    (brace_group
+      (setvar_statement
+        (identifier)
+        (number (integer))))))
+
+================================================================================
+Case statement
+================================================================================
+
+case (x) {
+  1 { echo "one" }
+  2 { echo "two" }
+  * { echo "other" }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (case_statement
+    (parenthesized_expression (identifier))
+    (case_arm
+      (pattern_list (pattern (word (number (integer)))))
+      (brace_group
+        (simple_command
+          (command_name (word (bare_word)))
+          (word (string (double_quoted_string))))))
+    (case_arm
+      (pattern_list (pattern (word (number (integer)))))
+      (brace_group
+        (simple_command
+          (command_name (word (bare_word)))
+          (word (string (double_quoted_string))))))
+    (case_arm
+      (pattern_list (pattern))
+      (brace_group
+        (simple_command
+          (command_name (word (bare_word)))
+          (word (string (double_quoted_string))))))))
+

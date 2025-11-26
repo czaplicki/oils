@@ -1,0 +1,29 @@
+[package]
+name = "tree-sitter-ysh"
+description = "Tree-sitter grammar for YSH (Oils Shell)"
+version = "0.1.0"
+license = "Apache-2.0"
+readme = "../../README.md"
+keywords = ["tree-sitter", "parser", "ysh", "oils", "shell"]
+categories = ["parsing", "text-editors"]
+repository = "https://github.com/oilshell/oil"
+edition = "2021"
+autoexamples = false
+
+build = "build.rs"
+include = [
+    "bindings/rust/*",
+    "grammar.js",
+    "queries/*",
+    "src/*",
+]
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+tree-sitter = ">=0.21,<0.23"
+
+[build-dependencies]
+cc = "1.0"
+

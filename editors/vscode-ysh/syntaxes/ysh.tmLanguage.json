@@ -1,0 +1,462 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "YSH",
+  "scopeName": "source.ysh",
+  "fileTypes": ["ysh", "osh"],
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#shebang" },
+    { "include": "#string" },
+    { "include": "#heredoc" },
+    { "include": "#command-substitution" },
+    { "include": "#expression-substitution" },
+    { "include": "#variable" },
+    { "include": "#array-splice" },
+    { "include": "#eggex" },
+    { "include": "#keyword" },
+    { "include": "#control-flow" },
+    { "include": "#ysh-keyword" },
+    { "include": "#builtin" },
+    { "include": "#operator" },
+    { "include": "#number" },
+    { "include": "#punctuation" },
+    { "include": "#function-definition" },
+    { "include": "#proc-definition" },
+    { "include": "#func-definition" }
+  ],
+  "repository": {
+    "comment": {
+      "patterns": [
+        {
+          "name": "comment.line.number-sign.doc.ysh",
+          "match": "###.*$"
+        },
+        {
+          "name": "comment.line.number-sign.ysh",
+          "match": "#.*$"
+        }
+      ]
+    },
+    "shebang": {
+      "name": "comment.line.shebang.ysh",
+      "match": "^#!.*$"
+    },
+    "string": {
+      "patterns": [
+        { "include": "#multiline-double-string" },
+        { "include": "#multiline-single-string" },
+        { "include": "#dollar-single-string" },
+        { "include": "#raw-string" },
+        { "include": "#j-string" },
+        { "include": "#double-string" },
+        { "include": "#single-string" }
+      ]
+    },
+    "single-string": {
+      "name": "string.quoted.single.ysh",
+      "begin": "'",
+      "end": "'",
+      "patterns": []
+    },
+    "double-string": {
+      "name": "string.quoted.double.ysh",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        { "include": "#escape-sequence" },
+        { "include": "#variable" },
+        { "include": "#command-substitution" },
+        { "include": "#expression-substitution" }
+      ]
+    },
+    "dollar-single-string": {
+      "name": "string.quoted.single.dollar.ysh",
+      "begin": "\\$'",
+      "end": "'",
+      "patterns": [
+        { "include": "#escape-sequence" }
+      ]
+    },
+    "raw-string": {
+      "name": "string.quoted.single.raw.ysh",
+      "begin": "r'",
+      "end": "'"
+    },
+    "j-string": {
+      "name": "string.quoted.double.j8.ysh",
+      "begin": "j\"",
+      "end": "\"",
+      "patterns": [
+        { "include": "#escape-sequence" }
+      ]
+    },
+    "multiline-single-string": {
+      "name": "string.quoted.triple.single.ysh",
+      "begin": "(u|b|r)?'''",
+      "end": "'''",
+      "patterns": []
+    },
+    "multiline-double-string": {
+      "name": "string.quoted.triple.double.ysh",
+      "begin": "(\\$)?\"\"\"",
+      "end": "\"\"\"",
+      "patterns": [
+        { "include": "#escape-sequence" },
+        { "include": "#variable" },
+        { "include": "#command-substitution" },
+        { "include": "#expression-substitution" }
+      ]
+    },
+    "escape-sequence": {
+      "name": "constant.character.escape.ysh",
+      "match": "\\\\(?:[\\\\\"'abefnrtv0]|x[0-9a-fA-F]{1,2}|u\\{[0-9a-fA-F]{1,6}\\}|u[0-9a-fA-F]{4}|[0-7]{1,3})"
+    },
+    "heredoc": {
+      "patterns": [
+        {
+          "name": "string.unquoted.heredoc.ysh",
+          "begin": "<<<\\s*'''",
+          "end": "'''",
+          "patterns": []
+        },
+        {
+          "name": "string.unquoted.heredoc.ysh",
+          "begin": "<<<\\s*\"\"\"",
+          "end": "\"\"\"",
+          "patterns": [
+            { "include": "#variable" },
+            { "include": "#command-substitution" }
+          ]
+        },
+        {
+          "begin": "(<<-?)\\s*(['\"]?)([a-zA-Z_][a-zA-Z0-9_]*)\\2",
+          "beginCaptures": {
+            "1": { "name": "keyword.operator.heredoc.ysh" },
+            "3": { "name": "entity.name.tag.heredoc.ysh" }
+          },
+          "end": "^\\3$",
+          "name": "string.unquoted.heredoc.ysh",
+          "patterns": [
+            { "include": "#variable" },
+            { "include": "#command-substitution" }
+          ]
+        }
+      ]
+    },
+    "variable": {
+      "patterns": [
+        {
+          "name": "variable.other.special.ysh",
+          "match": "\\$[?!$@#*-]"
+        },
+        {
+          "name": "variable.other.positional.ysh",
+          "match": "\\$[0-9]"
+        },
+        {
+          "name": "variable.other.readwrite.ysh",
+          "match": "\\$[a-zA-Z_][a-zA-Z0-9_]*"
+        },
+        {
+          "name": "variable.other.bracket.ysh",
+          "begin": "\\$\\{",
+          "end": "\\}",
+          "patterns": [
+            {
+              "name": "keyword.operator.expansion.ysh",
+              "match": "[#!]|:-|:=|:\\?|:\\+|%%?|##?|\\^\\^?|,,?|//?|:|\\[|\\]"
+            },
+            { "include": "#variable" },
+            { "include": "#string" }
+          ]
+        }
+      ]
+    },
+    "command-substitution": {
+      "patterns": [
+        {
+          "name": "meta.embedded.command.ysh",
+          "begin": "\\$\\(",
+          "end": "\\)",
+          "beginCaptures": {
+            "0": { "name": "punctuation.definition.command.begin.ysh" }
+          },
+          "endCaptures": {
+            "0": { "name": "punctuation.definition.command.end.ysh" }
+          },
+          "patterns": [
+            { "include": "$self" }
+          ]
+        },
+        {
+          "name": "meta.embedded.command.backtick.ysh",
+          "begin": "`",
+          "end": "`",
+          "patterns": [
+            { "include": "$self" }
+          ]
+        }
+      ]
+    },
+    "expression-substitution": {
+      "name": "meta.embedded.expression.ysh",
+      "begin": "\\$\\[",
+      "end": "\\]",
+      "beginCaptures": {
+        "0": { "name": "punctuation.definition.expression.begin.ysh" }
+      },
+      "endCaptures": {
+        "0": { "name": "punctuation.definition.expression.end.ysh" }
+      },
+      "patterns": [
+        { "include": "#expression" }
+      ]
+    },
+    "array-splice": {
+      "patterns": [
+        {
+          "name": "variable.other.array.ysh",
+          "match": "@[a-zA-Z_][a-zA-Z0-9_]*"
+        },
+        {
+          "name": "meta.embedded.array.ysh",
+          "begin": "@\\[",
+          "end": "\\]",
+          "patterns": [
+            { "include": "#expression" }
+          ]
+        }
+      ]
+    },
+    "eggex": {
+      "name": "string.regexp.ysh",
+      "begin": "(?<=[=\\(\\[,;])\\s*/(?!/)",
+      "end": "/([a-z]*)?",
+      "endCaptures": {
+        "1": { "name": "keyword.other.flag.regexp.ysh" }
+      },
+      "patterns": [
+        {
+          "name": "constant.character.escape.regexp.ysh",
+          "match": "\\\\."
+        },
+        {
+          "name": "keyword.control.anchor.regexp.ysh",
+          "match": "[\\^$]|%start|%end"
+        },
+        {
+          "name": "keyword.operator.quantifier.regexp.ysh",
+          "match": "[*+?]|\\{[0-9,]+\\}"
+        },
+        {
+          "name": "constant.other.character-class.set.regexp.ysh",
+          "begin": "\\[",
+          "end": "\\]",
+          "patterns": [
+            {
+              "name": "constant.character.escape.regexp.ysh",
+              "match": "\\\\."
+            }
+          ]
+        },
+        {
+          "name": "meta.group.regexp.ysh",
+          "begin": "\\(",
+          "end": "\\)",
+          "patterns": [
+            { "include": "#eggex" }
+          ]
+        },
+        {
+          "name": "keyword.operator.or.regexp.ysh",
+          "match": "\\|"
+        }
+      ]
+    },
+    "keyword": {
+      "patterns": [
+        {
+          "name": "keyword.control.conditional.ysh",
+          "match": "\\b(if|then|else|elif|fi)\\b"
+        },
+        {
+          "name": "keyword.control.loop.ysh",
+          "match": "\\b(for|in|do|done|while|until)\\b"
+        },
+        {
+          "name": "keyword.control.case.ysh",
+          "match": "\\b(case|esac)\\b"
+        },
+        {
+          "name": "keyword.other.function.ysh",
+          "match": "\\bfunction\\b"
+        },
+        {
+          "name": "keyword.other.time.ysh",
+          "match": "\\btime\\b"
+        }
+      ]
+    },
+    "control-flow": {
+      "name": "keyword.control.flow.ysh",
+      "match": "\\b(return|break|continue|exit)\\b"
+    },
+    "ysh-keyword": {
+      "patterns": [
+        {
+          "name": "keyword.declaration.ysh",
+          "match": "\\b(var|const|setvar|setglobal)\\b"
+        },
+        {
+          "name": "keyword.declaration.function.ysh",
+          "match": "\\b(proc|func|typed)\\b"
+        },
+        {
+          "name": "keyword.control.call.ysh",
+          "match": "\\bcall\\b"
+        },
+        {
+          "name": "keyword.operator.logical.ysh",
+          "match": "\\b(and|or|not)\\b"
+        },
+        {
+          "name": "keyword.operator.comparison.ysh",
+          "match": "\\b(is|in)\\b"
+        },
+        {
+          "name": "constant.language.ysh",
+          "match": "\\b(true|false|null)\\b"
+        }
+      ]
+    },
+    "builtin": {
+      "name": "support.function.builtin.ysh",
+      "match": "(?<=^|[;&|])\\s*(echo|printf|read|write|cd|pwd|pushd|popd|dirs|source|eval|exec|test|\\[|\\[\\[|jobs|fg|bg|wait|json|json8|pp|hay|haynode|use|assert|try|boolstatus|fork|forkwait|shopt|shvar|ctx|runproc|invoke|append|extend|pop|keys|values|items|get|erase|len|type|typeof|split|join|strip|trim|abs|max|min|fopen|error|failed)\\b"
+    },
+    "operator": {
+      "patterns": [
+        {
+          "name": "keyword.operator.comparison.ysh",
+          "match": "===|!==|~==|<=|>=|<|>|==|!="
+        },
+        {
+          "name": "keyword.operator.assignment.ysh",
+          "match": "\\+=|-=|\\*=|/=|//=|%=|\\*\\*=|<<=|>>=|&=|\\|=|\\^=|="
+        },
+        {
+          "name": "keyword.operator.arithmetic.ysh",
+          "match": "\\+\\+|\\*\\*|//|\\+|-|\\*|/|%"
+        },
+        {
+          "name": "keyword.operator.bitwise.ysh",
+          "match": "<<|>>|&|\\||\\^|~"
+        },
+        {
+          "name": "keyword.operator.logical.ysh",
+          "match": "&&|\\|\\||!"
+        },
+        {
+          "name": "keyword.operator.pipe.ysh",
+          "match": "\\|&|\\|"
+        },
+        {
+          "name": "keyword.operator.redirect.ysh",
+          "match": ">>>|<<-?|>>|<>|>&|<&|>\\||&>>|&>|<|>"
+        },
+        {
+          "name": "keyword.operator.range.ysh",
+          "match": "\\.\\.<|\\.\\.="
+        },
+        {
+          "name": "keyword.operator.member.ysh",
+          "match": "->|\\."
+        }
+      ]
+    },
+    "number": {
+      "patterns": [
+        {
+          "name": "constant.numeric.hex.ysh",
+          "match": "\\b0[xX][0-9a-fA-F_]+\\b"
+        },
+        {
+          "name": "constant.numeric.octal.ysh",
+          "match": "\\b0[oO][0-7_]+\\b"
+        },
+        {
+          "name": "constant.numeric.binary.ysh",
+          "match": "\\b0[bB][01_]+\\b"
+        },
+        {
+          "name": "constant.numeric.float.ysh",
+          "match": "\\b[0-9][0-9_]*(\\.[0-9_]+)?([eE][+-]?[0-9]+)?\\b"
+        },
+        {
+          "name": "constant.numeric.integer.ysh",
+          "match": "\\b[0-9][0-9_]*\\b"
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.definition.block.ysh",
+          "match": "[{}]"
+        },
+        {
+          "name": "punctuation.definition.group.ysh",
+          "match": "[()]"
+        },
+        {
+          "name": "punctuation.definition.array.ysh",
+          "match": "[\\[\\]]"
+        },
+        {
+          "name": "punctuation.separator.ysh",
+          "match": "[,;:]"
+        }
+      ]
+    },
+    "proc-definition": {
+      "match": "\\b(proc)\\s+([a-zA-Z_][a-zA-Z0-9_-]*)",
+      "captures": {
+        "1": { "name": "keyword.declaration.function.ysh" },
+        "2": { "name": "entity.name.function.ysh" }
+      }
+    },
+    "func-definition": {
+      "match": "\\b(func)\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+      "captures": {
+        "1": { "name": "keyword.declaration.function.ysh" },
+        "2": { "name": "entity.name.function.ysh" }
+      }
+    },
+    "function-definition": {
+      "patterns": [
+        {
+          "match": "\\b(function)\\s+([a-zA-Z_][a-zA-Z0-9_-]*)\\s*(?:\\(\\s*\\))?",
+          "captures": {
+            "1": { "name": "keyword.other.function.ysh" },
+            "2": { "name": "entity.name.function.ysh" }
+          }
+        },
+        {
+          "match": "\\b([a-zA-Z_][a-zA-Z0-9_-]*)\\s*\\(\\s*\\)\\s*\\{",
+          "captures": {
+            "1": { "name": "entity.name.function.ysh" }
+          }
+        }
+      ]
+    },
+    "expression": {
+      "patterns": [
+        { "include": "#string" },
+        { "include": "#number" },
+        { "include": "#variable" },
+        { "include": "#operator" },
+        { "include": "#ysh-keyword" }
+      ]
+    }
+  }
+}
+
