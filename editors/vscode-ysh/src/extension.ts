@@ -138,6 +138,63 @@ function registerCommands(context: vscode.ExtensionContext): void {
     }
   );
   context.subscriptions.push(showParseTreeCommand);
+
+  // Command to show debug info
+  const showDebugInfoCommand = vscode.commands.registerCommand(
+    'ysh.showDebugInfo',
+    async () => {
+      if (!client) {
+        vscode.window.showErrorMessage('Language server not running');
+        return;
+      }
+
+      try {
+        const debugInfo = await client.sendRequest('ysh/debugInfo');
+        const doc = await vscode.workspace.openTextDocument({
+          content: `YSH Language Server Debug Info\n${'='.repeat(40)}\n\n${JSON.stringify(debugInfo, null, 2)}`,
+          language: 'json',
+        });
+        await vscode.window.showTextDocument(doc, { preview: true });
+      } catch (error) {
+        vscode.window.showErrorMessage(`Failed to get debug info: ${error}`);
+      }
+    }
+  );
+  context.subscriptions.push(showDebugInfoCommand);
+
+  // Command to show symbols for current document
+  const showSymbolsCommand = vscode.commands.registerCommand(
+    'ysh.showSymbols',
+    async () => {
+      const editor = vscode.window.activeTextEditor;
+      if (!editor) {
+        vscode.window.showErrorMessage('No active editor');
+        return;
+      }
+
+      if (editor.document.languageId !== 'ysh' && editor.document.languageId !== 'osh') {
+        vscode.window.showErrorMessage('Not a YSH/OSH file');
+        return;
+      }
+
+      if (client) {
+        try {
+          const result = await client.sendRequest('ysh/symbols', {
+            textDocument: { uri: editor.document.uri.toString() },
+          });
+
+          const doc = await vscode.workspace.openTextDocument({
+            content: JSON.stringify(result, null, 2),
+            language: 'json',
+          });
+          await vscode.window.showTextDocument(doc, { preview: true });
+        } catch (error) {
+          vscode.window.showErrorMessage(`Failed to get symbols: ${error}`);
+        }
+      }
+    }
+  );
+  context.subscriptions.push(showSymbolsCommand);
 }
 
 export function deactivate(): Thenable<void> | undefined {

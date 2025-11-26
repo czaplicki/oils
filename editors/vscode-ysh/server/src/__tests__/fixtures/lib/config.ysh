@@ -1,0 +1,447 @@
+#!/usr/bin/env ysh
+
+# =============================================================================
+# Test Configuration File
+# Anonymized from real-world YSH deployment script
+# =============================================================================
+
+# Prevent double-sourcing
+source-guard lib/config.ysh || return 0
+
+# -----------------------------------------------------------------------------
+# Configuration as Data
+# -----------------------------------------------------------------------------
+
+const CONFIG = {
+  project: 'test-project',
+  zone: 'us-central1-a',
+  machine_type: 'n2-standard-4',  # 4 vCPUs, 16GB RAM
+  instance_name: 'test-instance',
+  boot_disk_size: '30GB',
+
+  # Billing account ID (anonymized)
+  billing_account: '000000-000000-000000',
+  organization_id: '123456789012',
+
+  domain: 'test.example.com',
+  pkb_domain: 'example.com',
+  pkb_subdomain: 'test.subdomain',
+
+  app_port: 8080,
+
+  api_base: 'https://api.example.com/v3',
+
+  repo_url: 'https://github.com/example/test-repo.git',
+  repo_branch: 'main',
+
+  timeout_seconds: 600,
+  poll_interval: 10,
+}
+
+# -----------------------------------------------------------------------------
+# Secondary Configuration
+# -----------------------------------------------------------------------------
+
+const SECONDARY_CONFIG = {
+  account_id: '123456789012',
+  region: 'us-east-1',
+  credentials_path: 'path/to/credentials',
+  settings: {
+    function_name: 'test-function',
+    comment: 'test-distribution',
+    origin: 'origin.example.com',
+    alt_origin: null,  # Set dynamically
+    price_class: 'PriceClass_100',
+    default_object: 'index.html',
+  },
+}
+
+# -----------------------------------------------------------------------------
+# Cluster Configuration
+# -----------------------------------------------------------------------------
+
+const CLUSTER_CONFIG = {
+  zones: ['us-central1-a', 'us-central1-b', 'us-central1-c'],
+  machine_type: 'e2-medium',
+  instance_prefix: 'worker',
+  instances_per_zone: 1,
+  boot_disk_size: '20GB',
+  tool: 'k6',
+
+  # Test parameters
+  test_duration: '60s',
+  virtual_users: 50,
+}
+
+# -----------------------------------------------------------------------------
+# Coordinator Configuration
+# -----------------------------------------------------------------------------
+
+const COORDINATOR_CONFIG = {
+  instance_name: 'coordinator',
+  zone: 'us-central1-a',
+  machine_type: 'e2-medium',
+  boot_disk_size: '20GB',
+
+  domain: 'coordinator.example.com',
+  subdomain: 'coordinator.test',
+
+  # Service ports
+  grafana_port: 3000,
+  influxdb_port: 8086,
+  receiver_port: 8080,
+
+  # Database config
+  database: 'metrics',
+  org: 'test-org',
+  bucket: 'test-bucket',
+
+  # Batching config
+  batch_interval: 10,
+}
+
+# -----------------------------------------------------------------------------
+# Utility Functions
+# -----------------------------------------------------------------------------
+
+proc log (msg) {
+  echo "[$(date '+%H:%M:%S')] $msg"
+}
+
+proc log_section (title) {
+  echo ""
+  echo "═══════════════════════════════════════════════════════════════════════════════"
+  echo " $title"
+  echo "═══════════════════════════════════════════════════════════════════════════════"
+}
+
+proc require_command (cmd) {
+  if ! command -v $cmd > /dev/null 2>&1 {
+    echo "ERROR: Required command '$cmd' not found." >&2
+    exit 1
+  }
+}
+
+proc require_commands {
+  for cmd in @ARGV {
+    require_command $cmd
+  }
+}
+
+# -----------------------------------------------------------------------------
+# Secrets Functions
+# -----------------------------------------------------------------------------
+
+proc get_api_secrets {
+  var creds = $(secret-tool show api/credentials)
+  setglobal API_KEY = $(echo $creds | head -1)
+  setglobal API_SECRET = $(echo $creds | tail -1)
+}
+
+proc get_token {
+  setglobal AUTH_TOKEN = $(secret-tool show auth/token | head -1)
+}
+
+# -----------------------------------------------------------------------------
+# Authentication & Setup
+# -----------------------------------------------------------------------------
+
+proc ensure_auth {
+  log "Checking authentication..."
+
+  var test_result = ''
+  try {
+    setvar test_result = $(gcloud auth print-access-token 2>&1)
+  }
+
+  var needs_auth = false
+  if test -z "$test_result" {
+    setvar needs_auth = true
+  }
+
+  if test "$needs_auth" = false {
+    var prefix = $(echo "$test_result" | cut -c1-4)
+    if test "$prefix" != "ya29" {
+      setvar needs_auth = true
+    }
+  }
+
+  if test "$needs_auth" = true {
+    log ""
+    log "⚠️  Authentication required!"
+    log ""
+    log "Your credentials have expired or are invalid."
+    log "Opening browser for authentication..."
+    log ""
+
+    gcloud auth login
+
+    try {
+      setvar test_result = $(gcloud auth print-access-token 2>&1)
+    }
+
+    if test -z "$test_result" {
+      log "ERROR: Authentication failed."
+      exit 1
+    }
+
+    setvar prefix = $(echo "$test_result" | cut -c1-4)
+    if test "$prefix" != "ya29" {
+      log "ERROR: Authentication failed."
+      exit 1
+    }
+  }
+
+  log "Authentication valid"
+
+  log "Setting default project to $[CONFIG.project]..."
+  gcloud config set project $[CONFIG.project] 2>/dev/null
+}
+
+# -----------------------------------------------------------------------------
+# Project & Billing Management
+# -----------------------------------------------------------------------------
+
+proc ensure_project_exists {
+  log "Ensuring project $[CONFIG.project] exists..."
+
+  var exists = ''
+  try {
+    setvar exists = $(gcloud projects describe $[CONFIG.project] --format='value(projectId)' 2>/dev/null)
+  }
+
+  if test -z "$exists" {
+    log "Creating project $[CONFIG.project]..."
+    gcloud projects create $[CONFIG.project] --organization=$[CONFIG.organization_id]
+
+    try {
+      setvar exists = $(gcloud projects describe $[CONFIG.project] --format='value(projectId)' 2>/dev/null)
+    }
+
+    if test -z "$exists" {
+      log "ERROR: Failed to create project $[CONFIG.project]"
+      exit 1
+    }
+
+    log "Project created successfully"
+  } else {
+    log "Project $[CONFIG.project] already exists"
+  }
+}
+
+proc check_billing_account_open {
+  log "Checking billing account $[CONFIG.billing_account] is open..."
+
+  var is_open = ''
+  try {
+    setvar is_open = $(gcloud beta billing accounts describe $[CONFIG.billing_account] --format='value(open)' 2>/dev/null)
+  }
+
+  if test "$is_open" != "True" {
+    log "ERROR: Billing account $[CONFIG.billing_account] is not open (status: $is_open)"
+    exit 1
+  }
+
+  log "Billing account is open and active"
+}
+
+proc ensure_billing_linked {
+  log "Checking billing status for project $[CONFIG.project]..."
+
+  var billing_info = '{}'
+  try {
+    setvar billing_info = $(gcloud billing projects describe $[CONFIG.project] --format=json 2>/dev/null)
+  }
+
+  if test -z "$billing_info" {
+    setvar billing_info = '{}'
+  }
+
+  var billing_enabled = $(echo $billing_info | jq -r '.billingEnabled // false')
+  var current_account = $(echo $billing_info | jq -r '.billingAccountName // ""' | sed 's|billingAccounts/||')
+
+  if test "$billing_enabled" = "true" && test "$current_account" = "$[CONFIG.billing_account]" {
+    log "Billing already linked to account $[CONFIG.billing_account]"
+  } else {
+    if test "$billing_enabled" = "true" {
+      log "Project has different billing account: $current_account"
+    }
+
+    log "Linking billing account $[CONFIG.billing_account]..."
+    gcloud billing projects link $[CONFIG.project] --billing-account=$[CONFIG.billing_account]
+
+    log "Billing account linked"
+  }
+
+  log "Waiting for billing to propagate..."
+  var attempt = 1
+  var max_attempts = 12
+
+  while (attempt <= max_attempts) {
+    var enabled = ''
+    try {
+      setvar enabled = $(gcloud billing projects describe $[CONFIG.project] --format='value(billingEnabled)' 2>/dev/null)
+    }
+
+    if test "$enabled" = "True" {
+      log "Billing is now enabled (confirmed)"
+      return
+    }
+
+    log "Billing not fully propagated yet, retrying ($attempt/$max_attempts)..."
+    sleep 5
+    setvar attempt = attempt + 1
+  }
+
+  log "WARNING: Billing propagation check timed out. Proceeding anyway..."
+}
+
+proc ensure_apis_enabled {
+  log "Enabling required APIs..."
+
+  gcloud services enable cloudbilling.googleapis.com --project=$[CONFIG.project]
+  log "Cloud Billing API enabled"
+
+  gcloud services enable compute.googleapis.com --project=$[CONFIG.project]
+  log "Compute Engine API enabled"
+}
+
+# -----------------------------------------------------------------------------
+# SSH and Instance Readiness
+# -----------------------------------------------------------------------------
+
+proc wait_for_ssh (instance, project, zone; max_attempts=30, interval=10) {
+  log "Waiting for SSH to become available on $instance..."
+
+  var attempt = 1
+
+  while (attempt <= max_attempts) {
+    log "SSH connection attempt $attempt/$max_attempts..."
+
+    try {
+      gcloud compute ssh $instance \
+        --project=$project \
+        --zone=$zone \
+        --command="echo 'SSH ready'" \
+        --ssh-flag="-o ConnectTimeout=10" \
+        --ssh-flag="-o StrictHostKeyChecking=no" \
+        2>/dev/null
+
+      log "SSH connection established!"
+      return 0
+    }
+
+    log "SSH not ready, retrying in $interval seconds..."
+    sleep $interval
+    setvar attempt = attempt + 1
+  }
+
+  log "ERROR: SSH connection failed after $max_attempts attempts"
+  return 1
+}
+
+proc wait_for_startup_complete (instance, project, zone; max_attempts=90, interval=20) {
+  log "Waiting for startup script to complete..."
+
+  var attempt = 1
+
+  while (attempt <= max_attempts) {
+    var elapsed_min = (attempt - 1) * interval / 60
+    log ""
+    log "━━━ Status check $attempt/$max_attempts (~${elapsed_min}m elapsed) ━━━"
+
+    var debug_output = ''
+    try {
+      setvar debug_output = $(gcloud compute ssh $instance \
+        --project=$project \
+        --zone=$zone \
+        --ssh-flag="-o ConnectTimeout=10" \
+        --ssh-flag="-o StrictHostKeyChecking=no" \
+        --command='
+          echo "=== Services ==="
+          echo -n "app: "; systemctl is-active app 2>/dev/null || echo "not-found"
+          echo ""
+          echo "=== Disk usage ==="
+          df -h / | tail -1
+        ' 2>/dev/null)
+    }
+
+    if test -n "$debug_output" {
+      echo "$debug_output"
+    }
+
+    var app_status = ''
+    try {
+      setvar app_status = $(gcloud compute ssh $instance \
+        --project=$project \
+        --zone=$zone \
+        --command="systemctl is-active app 2>/dev/null || echo 'not-ready'" \
+        --ssh-flag="-o ConnectTimeout=10" \
+        --ssh-flag="-o StrictHostKeyChecking=no" \
+        2>/dev/null)
+    }
+
+    if test "$app_status" = "active" {
+      log ""
+      log "✅ Startup complete - app is running!"
+      return 0
+    }
+
+    var startup_status = ''
+    try {
+      setvar startup_status = $(gcloud compute ssh $instance \
+        --project=$project \
+        --zone=$zone \
+        --command="systemctl is-active google-startup-scripts 2>/dev/null || echo 'unknown'" \
+        --ssh-flag="-o ConnectTimeout=10" \
+        --ssh-flag="-o StrictHostKeyChecking=no" \
+        2>/dev/null)
+    }
+
+    if test "$startup_status" = "inactive" {
+      log ""
+      log "⚠️  Startup script finished but app not active."
+      return 0
+    }
+
+    log ""
+    log "⏳ Startup in progress, next check in $interval seconds..."
+    sleep $interval
+    setvar attempt = attempt + 1
+  }
+
+  log ""
+  log "⚠️  WARNING: Startup timeout"
+  return 0
+}
+
+proc verify_billing_works {
+  log "Verifying billing is functional..."
+
+  var probe_result = ''
+  try {
+    setvar probe_result = $(gcloud compute project-info describe --project=$[CONFIG.project] --format='value(name)' 2>&1)
+  }
+
+  var probe_lower = $(echo "$probe_result" | tr '[:upper:]' '[:lower:]')
+
+  case $probe_lower in
+    (*billing*)
+      log "ERROR: Billing is not yet functional"
+      log "Output: $probe_result"
+      exit 1
+      ;;
+  esac
+
+  log "Billing verified - ready"
+}
+
+proc ensure_project_ready {
+  ensure_auth
+  check_billing_account_open
+  ensure_project_exists
+  ensure_billing_linked
+  ensure_apis_enabled
+  verify_billing_works
+}
+

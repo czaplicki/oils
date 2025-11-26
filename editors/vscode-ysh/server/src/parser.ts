@@ -1,9 +1,16 @@
 /**
  * YSH Parser
  *
- * A simple recursive descent parser for YSH that extracts symbols
- * and reports parse errors. This is a lightweight parser for IDE features,
- * not a full YSH implementation.
+ * A recursive descent parser for YSH that extracts symbols and reports parse errors.
+ * Handles both command mode (shell syntax) and expression mode (Python-like syntax).
+ *
+ * Key YSH constructs handled:
+ * - proc/func definitions with positional and named params (separated by ;)
+ * - var/const/setvar/setglobal declarations
+ * - try { } blocks
+ * - Dict literals: { key: value, ... }
+ * - Expression conditions: while (expr) { }, if (expr) { }
+ * - Expression substitution: $[expr]
  */
 
 export interface ParseError {
@@ -67,7 +74,7 @@ interface Token {
   endIndex: number;
 }
 
-// YSH keywords
+// YSH keywords - includes try
 const KEYWORDS = new Set([
   'if', 'then', 'else', 'elif', 'fi',
   'for', 'in', 'do', 'done',
@@ -79,7 +86,13 @@ const KEYWORDS = new Set([
   'call', 'return', 'break', 'continue', 'exit',
   'and', 'or', 'not',
   'true', 'false', 'null',
+  'try',  // YSH try block
+  'source-guard', // YSH source guard
 ]);
+
+// Safety limits
+const MAX_TOKENS = 100000;
+const MAX_ITERATIONS = 50000;
 
 export class YSHParser {
   private text: string = '';
@@ -88,6 +101,7 @@ export class YSHParser {
   private tokenIndex: number = 0;
   private errors: ParseError[] = [];
   private warnings: ParseWarning[] = [];
+  private iterations: number = 0;
 
   parse(text: string): ParseResult {
     this.text = text;
@@ -96,18 +110,26 @@ export class YSHParser {
     this.tokenIndex = 0;
     this.errors = [];
     this.warnings = [];
+    this.iterations = 0;
 
-    // Tokenize
-    this.tokenize();
+    try {
+      this.tokenize();
+      const tree = this.parseProgram();
+      return { tree, errors: this.errors, warnings: this.warnings };
+    } catch (e) {
+      return {
+        tree: { type: 'program', startIndex: 0, endIndex: text.length, children: [] },
+        errors: [{ message: `Parser error: ${e}`, startIndex: 0, endIndex: 1 }],
+        warnings: [],
+      };
+    }
+  }
 
-    // Parse
-    const tree = this.parseProgram();
-
-    return {
-      tree,
-      errors: this.errors,
-      warnings: this.warnings,
-    };
+  private checkIterations(context: string): void {
+    this.iterations++;
+    if (this.iterations > MAX_ITERATIONS) {
+      throw new Error(`Parser stuck in ${context} at token ${this.tokenIndex}`);
+    }
   }
 
   // =========================================================================
@@ -115,11 +137,10 @@ export class YSHParser {
   // =========================================================================
 
   private tokenize(): void {
-    while (this.pos < this.text.length) {
-      this.skipWhitespace();
+    while (this.pos < this.text.length && this.tokens.length < MAX_TOKENS) {
+      this.skipWhitespaceNotNewline();
       if (this.pos >= this.text.length) break;
 
-      const startPos = this.pos;
       const char = this.text[this.pos];
 
       // Comments
@@ -140,41 +161,53 @@ export class YSHParser {
         continue;
       }
 
+      // Triple-quoted strings
+      if (this.pos + 2 < this.text.length) {
+        const three = this.text.slice(this.pos, this.pos + 3);
+        if (three === "'''" || three === '"""') {
+          this.tokenizeMultilineString();
+          continue;
+        }
+      }
+
       // String literals
       if (char === '"' || char === "'") {
         this.tokenizeString();
         continue;
       }
 
-      // Multi-character string prefixes
+      // String prefixes: $"...", r"...", j"...", etc.
       if ((char === '$' || char === 'r' || char === 'u' || char === 'b' || char === 'j') &&
-          this.pos + 1 < this.text.length &&
-          (this.text[this.pos + 1] === '"' || this.text[this.pos + 1] === "'")) {
+        this.pos + 1 < this.text.length &&
+        (this.text[this.pos + 1] === '"' || this.text[this.pos + 1] === "'")) {
+        const prefix = char;
         this.pos++;
-        this.tokenizeString();
-        continue;
-      }
-
-      // Triple-quoted strings
-      if (this.text.slice(this.pos, this.pos + 3) === "'''" ||
-          this.text.slice(this.pos, this.pos + 3) === '"""') {
-        this.tokenizeMultilineString();
+        this.tokenizeString(prefix);
         continue;
       }
 
       // Numbers
-      if (this.isDigit(char) || (char === '-' && this.isDigit(this.text[this.pos + 1]))) {
+      if (this.isDigit(char)) {
         this.tokenizeNumber();
         continue;
       }
 
-      // Operators and punctuation
-      if (this.isOperator(char)) {
+      // Negative numbers (but not --option)
+      if (char === '-' && this.pos + 1 < this.text.length) {
+        const next = this.text[this.pos + 1];
+        if (this.isDigit(next)) {
+          this.tokenizeNumber();
+          continue;
+        }
+      }
+
+      // Operators
+      if (this.isOperatorStart(char)) {
         this.tokenizeOperator();
         continue;
       }
 
-      // Special single characters
+      // Punctuation
       switch (char) {
         case '(':
           this.addToken(TokenType.LPAREN, '(');
@@ -203,25 +236,24 @@ export class YSHParser {
         case ':':
           this.addToken(TokenType.COLON, ':');
           continue;
-        case '$':
-          this.tokenizeDollar();
-          continue;
         case '@':
           this.addToken(TokenType.AT, '@');
           continue;
+        case '$':
+          this.tokenizeDollar();
+          continue;
       }
 
-      // Words/identifiers
-      if (this.isWordChar(char)) {
+      // Words and identifiers
+      if (this.isWordStart(char) || char === '-') {
         this.tokenizeWord();
         continue;
       }
 
-      // Unknown character - skip
+      // Unknown - skip
       this.pos++;
     }
 
-    // Add EOF token
     this.tokens.push({
       type: TokenType.EOF,
       value: '',
@@ -230,12 +262,12 @@ export class YSHParser {
     });
   }
 
-  private skipWhitespace(): void {
+  private skipWhitespaceNotNewline(): void {
     while (this.pos < this.text.length) {
       const char = this.text[this.pos];
       if (char === ' ' || char === '\t' || char === '\r') {
         this.pos++;
-      } else if (char === '\\' && this.text[this.pos + 1] === '\n') {
+      } else if (char === '\\' && this.pos + 1 < this.text.length && this.text[this.pos + 1] === '\n') {
         // Line continuation
         this.pos += 2;
       } else {
@@ -267,7 +299,7 @@ export class YSHParser {
     });
   }
 
-  private tokenizeString(): void {
+  private tokenizeString(prefix: string = ''): void {
     const start = this.pos;
     const quote = this.text[this.pos];
     this.pos++;
@@ -277,15 +309,10 @@ export class YSHParser {
       if (char === quote) {
         this.pos++;
         break;
-      } else if (char === '\\') {
+      } else if (char === '\\' && this.pos + 1 < this.text.length) {
         this.pos += 2;
       } else if (char === '\n') {
         // Unterminated string
-        this.errors.push({
-          message: 'Unterminated string literal',
-          startIndex: start,
-          endIndex: this.pos,
-        });
         break;
       } else {
         this.pos++;
@@ -294,8 +321,8 @@ export class YSHParser {
 
     this.tokens.push({
       type: TokenType.STRING,
-      value: this.text.slice(start, this.pos),
-      startIndex: start,
+      value: prefix + this.text.slice(start, this.pos),
+      startIndex: start - prefix.length,
       endIndex: this.pos,
     });
   }
@@ -306,10 +333,10 @@ export class YSHParser {
     this.pos += 3;
 
     while (this.pos < this.text.length) {
-      if (this.text.slice(this.pos, this.pos + 3) === quote) {
+      if (this.pos + 2 < this.text.length && this.text.slice(this.pos, this.pos + 3) === quote) {
         this.pos += 3;
         break;
-      } else if (this.text[this.pos] === '\\') {
+      } else if (this.text[this.pos] === '\\' && this.pos + 1 < this.text.length) {
         this.pos += 2;
       } else {
         this.pos++;
@@ -327,37 +354,27 @@ export class YSHParser {
   private tokenizeNumber(): void {
     const start = this.pos;
 
-    // Handle negative sign
     if (this.text[this.pos] === '-') {
       this.pos++;
     }
 
-    // Handle different number formats
-    if (this.text[this.pos] === '0' && this.pos + 1 < this.text.length) {
+    // Hex, octal, binary
+    if (this.pos < this.text.length && this.text[this.pos] === '0' && this.pos + 1 < this.text.length) {
       const next = this.text[this.pos + 1].toLowerCase();
       if (next === 'x') {
-        // Hex
         this.pos += 2;
-        while (this.pos < this.text.length && this.isHexDigit(this.text[this.pos])) {
-          this.pos++;
-        }
+        while (this.pos < this.text.length && this.isHexDigit(this.text[this.pos])) this.pos++;
       } else if (next === 'o') {
-        // Octal
         this.pos += 2;
-        while (this.pos < this.text.length && this.isOctalDigit(this.text[this.pos])) {
-          this.pos++;
-        }
+        while (this.pos < this.text.length && this.isOctalDigit(this.text[this.pos])) this.pos++;
       } else if (next === 'b') {
-        // Binary
         this.pos += 2;
-        while (this.pos < this.text.length && (this.text[this.pos] === '0' || this.text[this.pos] === '1')) {
-          this.pos++;
-        }
+        while (this.pos < this.text.length && (this.text[this.pos] === '0' || this.text[this.pos] === '1')) this.pos++;
       } else {
-        this.tokenizeDecimal();
+        this.tokenizeDecimalPart();
       }
     } else {
-      this.tokenizeDecimal();
+      this.tokenizeDecimalPart();
     }
 
     this.tokens.push({
@@ -368,23 +385,19 @@ export class YSHParser {
     });
   }
 
-  private tokenizeDecimal(): void {
+  private tokenizeDecimalPart(): void {
     while (this.pos < this.text.length && (this.isDigit(this.text[this.pos]) || this.text[this.pos] === '_')) {
       this.pos++;
     }
-
-    // Decimal point
     if (this.pos < this.text.length && this.text[this.pos] === '.') {
       this.pos++;
       while (this.pos < this.text.length && (this.isDigit(this.text[this.pos]) || this.text[this.pos] === '_')) {
         this.pos++;
       }
     }
-
-    // Exponent
     if (this.pos < this.text.length && (this.text[this.pos] === 'e' || this.text[this.pos] === 'E')) {
       this.pos++;
-      if (this.text[this.pos] === '+' || this.text[this.pos] === '-') {
+      if (this.pos < this.text.length && (this.text[this.pos] === '+' || this.text[this.pos] === '-')) {
         this.pos++;
       }
       while (this.pos < this.text.length && this.isDigit(this.text[this.pos])) {
@@ -393,20 +406,29 @@ export class YSHParser {
     }
   }
 
+  private isOperatorStart(char: string): boolean {
+    return '+-*/%<>=!&|^~.>'.includes(char);
+  }
+
   private tokenizeOperator(): void {
-    const start = this.pos;
     const char = this.text[this.pos];
+    const twoChar = this.pos + 1 < this.text.length ? this.text.slice(this.pos, this.pos + 2) : '';
+    const threeChar = this.pos + 2 < this.text.length ? this.text.slice(this.pos, this.pos + 3) : '';
 
-    // Check for multi-character operators
-    const twoChar = this.text.slice(this.pos, this.pos + 2);
-    const threeChar = this.text.slice(this.pos, this.pos + 3);
-
-    if (['===', '!==', '~==', '..=', '..<', '&&=', '||=', '>>=', '<<=', '**=', '//='].includes(threeChar)) {
+    // Three-char operators
+    if (['===', '!==', '~==', '..=', '..<', '&&=', '||=', '>>=', '<<=', '**=', '//=', '2>&'].includes(threeChar)) {
       this.addToken(TokenType.OPERATOR, threeChar);
-    } else if (['==', '!=', '<=', '>=', '&&', '||', '|&', '>>', '<<', '**', '//', '++',
-                '+=', '-=', '*=', '/=', '%=', '&=', '|=', '^=', '->', '..'].includes(twoChar)) {
+      return;
+    }
+
+    // Two-char operators
+    if (['==', '!=', '<=', '>=', '&&', '||', '|&', '>>', '<<', '**', '//',
+      '++', '--', '+=', '-=', '*=', '/=', '%=', '&=', '|=', '^=', '->', '..', '2>', '>&'].includes(twoChar)) {
       this.addToken(TokenType.OPERATOR, twoChar);
-    } else if (char === '=') {
+      return;
+    }
+
+    if (char === '=') {
       this.addToken(TokenType.EQUALS, '=');
     } else if (char === '|') {
       this.addToken(TokenType.PIPE, '|');
@@ -420,165 +442,91 @@ export class YSHParser {
     this.pos++;
 
     if (this.pos >= this.text.length) {
-      this.tokens.push({
-        type: TokenType.DOLLAR,
-        value: '$',
-        startIndex: start,
-        endIndex: this.pos,
-      });
+      this.tokens.push({ type: TokenType.DOLLAR, value: '$', startIndex: start, endIndex: this.pos });
       return;
     }
 
     const char = this.text[this.pos];
 
-    // ${ for brace expansion
+    // ${ ${name} or ${...}
     if (char === '{') {
-      this.pos++;
-      let depth = 1;
-      while (this.pos < this.text.length && depth > 0) {
-        if (this.text[this.pos] === '{') depth++;
-        else if (this.text[this.pos] === '}') depth--;
-        this.pos++;
-      }
-      this.tokens.push({
-        type: TokenType.WORD,
-        value: this.text.slice(start, this.pos),
-        startIndex: start,
-        endIndex: this.pos,
-      });
+      this.tokenizeDelimited(start, '{', '}');
       return;
     }
 
-    // $( for command substitution
+    // $( command substitution
     if (char === '(') {
-      this.pos++;
-      let depth = 1;
-      while (this.pos < this.text.length && depth > 0) {
-        if (this.text[this.pos] === '(') depth++;
-        else if (this.text[this.pos] === ')') depth--;
-        this.pos++;
-      }
-      this.tokens.push({
-        type: TokenType.WORD,
-        value: this.text.slice(start, this.pos),
-        startIndex: start,
-        endIndex: this.pos,
-      });
+      this.tokenizeDelimited(start, '(', ')');
       return;
     }
 
-    // $[ for expression substitution
+    // $[ expression substitution - YSH specific
     if (char === '[') {
-      this.pos++;
-      let depth = 1;
-      while (this.pos < this.text.length && depth > 0) {
-        if (this.text[this.pos] === '[') depth++;
-        else if (this.text[this.pos] === ']') depth--;
-        this.pos++;
-      }
-      this.tokens.push({
-        type: TokenType.WORD,
-        value: this.text.slice(start, this.pos),
-        startIndex: start,
-        endIndex: this.pos,
-      });
+      this.tokenizeDelimited(start, '[', ']');
       return;
     }
 
-    // Special variables: $?, $!, $$, $@, $#, $*, $-
+    // Special vars: $?, $!, $$, $@, $#, $*, $-
     if ('?!$@#*-'.includes(char)) {
       this.pos++;
-      this.tokens.push({
-        type: TokenType.WORD,
-        value: this.text.slice(start, this.pos),
-        startIndex: start,
-        endIndex: this.pos,
-      });
+      this.tokens.push({ type: TokenType.WORD, value: this.text.slice(start, this.pos), startIndex: start, endIndex: this.pos });
       return;
     }
 
-    // Numeric variable: $0-$9
+    // $0-$9
     if (this.isDigit(char)) {
       this.pos++;
-      this.tokens.push({
-        type: TokenType.WORD,
-        value: this.text.slice(start, this.pos),
-        startIndex: start,
-        endIndex: this.pos,
-      });
+      this.tokens.push({ type: TokenType.WORD, value: this.text.slice(start, this.pos), startIndex: start, endIndex: this.pos });
       return;
     }
 
-    // Named variable: $name
+    // $name
     if (this.isWordStart(char)) {
-      while (this.pos < this.text.length && this.isWordChar(this.text[this.pos])) {
+      while (this.pos < this.text.length && (this.isWordChar(this.text[this.pos]) || this.text[this.pos] === '.')) {
         this.pos++;
       }
-      this.tokens.push({
-        type: TokenType.WORD,
-        value: this.text.slice(start, this.pos),
-        startIndex: start,
-        endIndex: this.pos,
-      });
+      this.tokens.push({ type: TokenType.WORD, value: this.text.slice(start, this.pos), startIndex: start, endIndex: this.pos });
       return;
     }
 
-    // Just a dollar sign
-    this.tokens.push({
-      type: TokenType.DOLLAR,
-      value: '$',
-      startIndex: start,
-      endIndex: start + 1,
-    });
+    this.tokens.push({ type: TokenType.DOLLAR, value: '$', startIndex: start, endIndex: start + 1 });
+  }
+
+  private tokenizeDelimited(start: number, open: string, close: string): void {
+    this.pos++;
+    let depth = 1;
+    while (this.pos < this.text.length && depth > 0) {
+      const c = this.text[this.pos];
+      if (c === open) depth++;
+      else if (c === close) depth--;
+      this.pos++;
+    }
+    this.tokens.push({ type: TokenType.WORD, value: this.text.slice(start, this.pos), startIndex: start, endIndex: this.pos });
   }
 
   private tokenizeWord(): void {
     const start = this.pos;
-    while (this.pos < this.text.length && this.isWordChar(this.text[this.pos])) {
-      this.pos++;
+
+    // Handle words that may contain - (like source-guard, --option)
+    while (this.pos < this.text.length) {
+      const char = this.text[this.pos];
+      if (this.isWordChar(char) || char === '-') {
+        this.pos++;
+      } else {
+        break;
+      }
     }
 
     const value = this.text.slice(start, this.pos);
     const type = KEYWORDS.has(value) ? TokenType.KEYWORD : TokenType.IDENTIFIER;
-
-    this.tokens.push({
-      type,
-      value,
-      startIndex: start,
-      endIndex: this.pos,
-    });
+    this.tokens.push({ type, value, startIndex: start, endIndex: this.pos });
   }
 
-  // Character classification
-  private isDigit(char: string): boolean {
-    return char >= '0' && char <= '9';
-  }
-
-  private isHexDigit(char: string): boolean {
-    return this.isDigit(char) ||
-           (char >= 'a' && char <= 'f') ||
-           (char >= 'A' && char <= 'F');
-  }
-
-  private isOctalDigit(char: string): boolean {
-    return char >= '0' && char <= '7';
-  }
-
-  private isWordStart(char: string): boolean {
-    return (char >= 'a' && char <= 'z') ||
-           (char >= 'A' && char <= 'Z') ||
-           char === '_';
-  }
-
-  private isWordChar(char: string): boolean {
-    return this.isWordStart(char) ||
-           this.isDigit(char) ||
-           char === '-';
-  }
-
-  private isOperator(char: string): boolean {
-    return '+-*/%<>=!&|^~.'.includes(char);
-  }
+  private isDigit(char: string): boolean { return char >= '0' && char <= '9'; }
+  private isHexDigit(char: string): boolean { return this.isDigit(char) || (char >= 'a' && char <= 'f') || (char >= 'A' && char <= 'F'); }
+  private isOctalDigit(char: string): boolean { return char >= '0' && char <= '7'; }
+  private isWordStart(char: string): boolean { return (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || char === '_'; }
+  private isWordChar(char: string): boolean { return this.isWordStart(char) || this.isDigit(char); }
 
   // =========================================================================
   // Parser
@@ -588,11 +536,10 @@ export class YSHParser {
     return this.tokens[this.tokenIndex] || this.tokens[this.tokens.length - 1];
   }
 
-  private nextToken(): Token {
+  private nextToken(): void {
     if (this.tokenIndex < this.tokens.length - 1) {
       this.tokenIndex++;
     }
-    return this.currentToken();
   }
 
   private peekToken(offset: number = 1): Token {
@@ -600,102 +547,72 @@ export class YSHParser {
     return this.tokens[Math.min(index, this.tokens.length - 1)];
   }
 
-  private expect(type: TokenType): Token {
-    const token = this.currentToken();
-    if (token.type !== type) {
-      this.errors.push({
-        message: `Expected ${type}, got ${token.type}`,
-        startIndex: token.startIndex,
-        endIndex: token.endIndex,
-      });
-    }
-    this.nextToken();
-    return token;
-  }
-
-  private skipNewlines(): void {
-    while (this.currentToken().type === TokenType.NEWLINE ||
-           this.currentToken().type === TokenType.COMMENT) {
+  private skipNewlinesAndComments(): void {
+    while (this.currentToken().type === TokenType.NEWLINE || this.currentToken().type === TokenType.COMMENT) {
       this.nextToken();
     }
   }
 
   private parseProgram(): ASTNode {
-    const startIndex = 0;
     const children: ASTNode[] = [];
+    this.skipNewlinesAndComments();
 
-    this.skipNewlines();
-
+    let lastIndex = -1;
     while (this.currentToken().type !== TokenType.EOF) {
-      const statement = this.parseStatement();
-      if (statement) {
-        children.push(statement);
+      this.checkIterations('parseProgram');
+
+      // Detect stuck parser
+      if (this.tokenIndex === lastIndex) {
+        this.nextToken(); // Force progress
+        continue;
       }
-      this.skipNewlines();
+      lastIndex = this.tokenIndex;
+
+      const stmt = this.parseStatement();
+      if (stmt) children.push(stmt);
+      this.skipNewlinesAndComments();
     }
 
-    return {
-      type: 'program',
-      startIndex,
-      endIndex: this.text.length,
-      children,
-    };
+    return { type: 'program', startIndex: 0, endIndex: this.text.length, children };
   }
 
   private parseStatement(): ASTNode | null {
     const token = this.currentToken();
 
-    // Skip comments
     if (token.type === TokenType.COMMENT) {
-      const node: ASTNode = {
-        type: 'comment',
-        startIndex: token.startIndex,
-        endIndex: token.endIndex,
-        value: token.value,
-      };
+      const node: ASTNode = { type: 'comment', startIndex: token.startIndex, endIndex: token.endIndex, value: token.value };
       this.nextToken();
       return node;
     }
 
-    // Handle keywords
     if (token.type === TokenType.KEYWORD) {
       switch (token.value) {
-        case 'proc':
-          return this.parseProcDefinition();
-        case 'func':
-          return this.parseFuncDefinition();
-        case 'var':
-          return this.parseVarDeclaration();
-        case 'const':
-          return this.parseConstDeclaration();
+        case 'proc': return this.parseProcDefinition();
+        case 'func': return this.parseFuncDefinition();
+        case 'var': return this.parseVarDeclaration();
+        case 'const': return this.parseConstDeclaration();
         case 'setvar':
-        case 'setglobal':
-          return this.parseSetStatement();
-        case 'if':
-          return this.parseIfStatement();
-        case 'for':
-          return this.parseForStatement();
+        case 'setglobal': return this.parseSetStatement();
+        case 'if': return this.parseIfStatement();
+        case 'for': return this.parseForStatement();
         case 'while':
-        case 'until':
-          return this.parseWhileStatement();
-        case 'case':
-          return this.parseCaseStatement();
-        case 'function':
-          return this.parseShellFunction();
-        case 'call':
-          return this.parseCallStatement();
+        case 'until': return this.parseWhileStatement();
+        case 'case': return this.parseCaseStatement();
+        case 'function': return this.parseShellFunction();
+        case 'call': return this.parseCallStatement();
         case 'return':
         case 'break':
         case 'continue':
-        case 'exit':
-          return this.parseControlFlow();
+        case 'exit': return this.parseControlFlow();
+        case 'try': return this.parseTryStatement();
+        default: return this.parseSimpleCommand();
       }
     }
 
-    // Shell function definition: name() { }
+    // Shell function: name() { }
     if (token.type === TokenType.IDENTIFIER &&
-        this.peekToken().type === TokenType.LPAREN &&
-        this.peekToken(2).type === TokenType.RPAREN) {
+      this.peekToken().type === TokenType.LPAREN &&
+      this.peekToken(2).type === TokenType.RPAREN) {
       return this.parseShellFunction();
     }
 
@@ -704,46 +621,55 @@ export class YSHParser {
       return this.parseExpressionStatement();
     }
 
-    // Variable assignment: name=value
+    // Assignment: name = value
     if (token.type === TokenType.IDENTIFIER) {
       const next = this.peekToken();
-      if (next.type === TokenType.EQUALS ||
-          (next.type === TokenType.OPERATOR && next.value === '+=')) {
+      if (next.type === TokenType.EQUALS || (next.type === TokenType.OPERATOR && next.value === '+=')) {
         return this.parseAssignment();
       }
     }
 
-    // Simple command
     return this.parseSimpleCommand();
+  }
+
+  private parseTryStatement(): ASTNode {
+    const start = this.currentToken();
+    this.nextToken(); // try
+
+    this.skipNewlinesAndComments();
+    const children: ASTNode[] = [];
+
+    // Parse try body
+    if (this.currentToken().type === TokenType.LBRACE) {
+      const body = this.parseBraceGroup();
+      if (body) children.push(body);
+    }
+
+    return { type: 'try_statement', startIndex: start.startIndex, endIndex: this.currentToken().startIndex, children };
   }
 
   private parseProcDefinition(): ASTNode {
     const start = this.currentToken();
-    this.expect(TokenType.KEYWORD); // proc
+    this.nextToken(); // proc
 
-    const nameToken = this.expect(TokenType.IDENTIFIER);
-    const name = nameToken.value;
+    let name = 'unknown';
+    if (this.currentToken().type === TokenType.IDENTIFIER) {
+      name = this.currentToken().value;
+      this.nextToken();
+    }
 
     const params: string[] = [];
 
-    // Optional parameter list
+    // Parameter list with ; separator for named params
     if (this.currentToken().type === TokenType.LPAREN) {
       this.nextToken();
-      while (this.currentToken().type !== TokenType.RPAREN &&
-             this.currentToken().type !== TokenType.EOF) {
-        if (this.currentToken().type === TokenType.IDENTIFIER) {
-          params.push(this.currentToken().value);
-        }
+      this.parseProcParamList(params);
+      if (this.currentToken().type === TokenType.RPAREN) {
         this.nextToken();
-        if (this.currentToken().type === TokenType.COMMA) {
-          this.nextToken();
-        }
       }
-      this.expect(TokenType.RPAREN);
     }
 
-    // Body
-    this.skipNewlines();
+    this.skipNewlinesAndComments();
     const body = this.parseBraceGroup();
 
     return {
@@ -756,42 +682,67 @@ export class YSHParser {
     };
   }
 
-  private parseFuncDefinition(): ASTNode {
-    const start = this.currentToken();
-    this.expect(TokenType.KEYWORD); // func
-
-    const nameToken = this.expect(TokenType.IDENTIFIER);
-    const name = nameToken.value;
-
-    const params: string[] = [];
-
-    // Parameter list
-    this.expect(TokenType.LPAREN);
-    while (this.currentToken().type !== TokenType.RPAREN &&
-           this.currentToken().type !== TokenType.EOF) {
+  private parseProcParamList(params: string[]): void {
+    // Handle: (x, y, z; named=default, other=val)
+    while (this.currentToken().type !== TokenType.RPAREN && this.currentToken().type !== TokenType.EOF) {
       if (this.currentToken().type === TokenType.IDENTIFIER) {
         params.push(this.currentToken().value);
       }
       this.nextToken();
-      if (this.currentToken().type === TokenType.COMMA) {
+
+      // Skip type annotation
+      if (this.currentToken().type === TokenType.COLON) {
+        this.nextToken();
+        if (this.currentToken().type === TokenType.IDENTIFIER) {
+          this.nextToken();
+        }
+      }
+
+      // Skip default value
+      if (this.currentToken().type === TokenType.EQUALS) {
+        this.nextToken();
+        this.skipExpressionUntil([TokenType.COMMA, TokenType.SEMICOLON, TokenType.RPAREN]);
+      }
+
+      // Comma or semicolon separator
+      if (this.currentToken().type === TokenType.COMMA || this.currentToken().type === TokenType.SEMICOLON) {
         this.nextToken();
       }
     }
-    this.expect(TokenType.RPAREN);
+  }
+
+  private parseFuncDefinition(): ASTNode {
+    const start = this.currentToken();
+    this.nextToken(); // func
+
+    let name = 'unknown';
+    if (this.currentToken().type === TokenType.IDENTIFIER) {
+      name = this.currentToken().value;
+      this.nextToken();
+    }
+
+    const params: string[] = [];
+
+    if (this.currentToken().type === TokenType.LPAREN) {
+      this.nextToken();
+      this.parseProcParamList(params);
+      if (this.currentToken().type === TokenType.RPAREN) {
+        this.nextToken();
+      }
+    }
 
     // Optional return type
     if (this.currentToken().type === TokenType.COLON) {
       this.nextToken();
-      // Skip type expression
+      // Skip type until { or newline
       while (this.currentToken().type !== TokenType.LBRACE &&
-             this.currentToken().type !== TokenType.NEWLINE &&
-             this.currentToken().type !== TokenType.EOF) {
+        this.currentToken().type !== TokenType.NEWLINE &&
+        this.currentToken().type !== TokenType.EOF) {
         this.nextToken();
       }
     }
 
-    // Body
-    this.skipNewlines();
+    this.skipNewlinesAndComments();
     const body = this.parseBraceGroup();
 
     return {
@@ -806,18 +757,18 @@ export class YSHParser {
 
   private parseVarDeclaration(): ASTNode {
     const start = this.currentToken();
-    this.expect(TokenType.KEYWORD); // var
+    this.nextToken(); // var
 
-    const nameToken = this.expect(TokenType.IDENTIFIER);
+    let name = 'unknown';
+    if (this.currentToken().type === TokenType.IDENTIFIER) {
+      name = this.currentToken().value;
+      this.nextToken();
+    }
 
-    // Optional type annotation
+    // Optional type
     if (this.currentToken().type === TokenType.COLON) {
       this.nextToken();
-      // Skip type
-      while (this.currentToken().type === TokenType.IDENTIFIER ||
-             this.currentToken().type === TokenType.LBRACKET ||
-             this.currentToken().type === TokenType.RBRACKET ||
-             this.currentToken().type === TokenType.COMMA) {
+      if (this.currentToken().type === TokenType.IDENTIFIER) {
         this.nextToken();
       }
     }
@@ -825,117 +776,106 @@ export class YSHParser {
     // Optional initializer
     if (this.currentToken().type === TokenType.EQUALS) {
       this.nextToken();
-      // Skip expression until newline or semicolon
-      this.skipExpression();
+      this.skipYshExpression();
     }
 
-    return {
-      type: 'var_declaration',
-      startIndex: start.startIndex,
-      endIndex: this.currentToken().startIndex,
-      name: nameToken.value,
-    };
+    return { type: 'var_declaration', startIndex: start.startIndex, endIndex: this.currentToken().startIndex, name };
   }
 
   private parseConstDeclaration(): ASTNode {
     const start = this.currentToken();
-    this.expect(TokenType.KEYWORD); // const
+    this.nextToken(); // const
 
-    const nameToken = this.expect(TokenType.IDENTIFIER);
+    let name = 'unknown';
+    if (this.currentToken().type === TokenType.IDENTIFIER) {
+      name = this.currentToken().value;
+      this.nextToken();
+    }
 
-    // Optional type annotation
+    // Optional type
     if (this.currentToken().type === TokenType.COLON) {
       this.nextToken();
-      while (this.currentToken().type === TokenType.IDENTIFIER ||
-             this.currentToken().type === TokenType.LBRACKET ||
-             this.currentToken().type === TokenType.RBRACKET ||
-             this.currentToken().type === TokenType.COMMA) {
+      if (this.currentToken().type === TokenType.IDENTIFIER) {
         this.nextToken();
       }
     }
 
     // Required initializer
-    this.expect(TokenType.EQUALS);
-    this.skipExpression();
+    if (this.currentToken().type === TokenType.EQUALS) {
+      this.nextToken();
+      this.skipYshExpression();
+    }
 
-    return {
-      type: 'const_declaration',
-      startIndex: start.startIndex,
-      endIndex: this.currentToken().startIndex,
-      name: nameToken.value,
-    };
+    return { type: 'const_declaration', startIndex: start.startIndex, endIndex: this.currentToken().startIndex, name };
   }
 
   private parseSetStatement(): ASTNode {
     const start = this.currentToken();
     const keyword = this.currentToken().value;
-    this.nextToken(); // setvar or setglobal
+    this.nextToken();
 
-    const nameToken = this.expect(TokenType.IDENTIFIER);
-
-    // Assignment operator
-    if (this.currentToken().type === TokenType.EQUALS ||
-        this.currentToken().type === TokenType.OPERATOR) {
+    let name = 'unknown';
+    if (this.currentToken().type === TokenType.IDENTIFIER) {
+      name = this.currentToken().value;
       this.nextToken();
     }
 
-    // Expression
-    this.skipExpression();
+    if (this.currentToken().type === TokenType.EQUALS || this.currentToken().type === TokenType.OPERATOR) {
+      this.nextToken();
+    }
+
+    this.skipYshExpression();
 
     return {
       type: keyword === 'setvar' ? 'setvar' : 'setglobal',
       startIndex: start.startIndex,
       endIndex: this.currentToken().startIndex,
-      name: nameToken.value,
+      name,
     };
   }
 
   private parseIfStatement(): ASTNode {
     const start = this.currentToken();
-    this.expect(TokenType.KEYWORD); // if
+    this.nextToken(); // if
 
-    // Condition
-    this.skipCondition();
+    // Condition can be (expr) or command
+    if (this.currentToken().type === TokenType.LPAREN) {
+      this.skipBalanced(TokenType.LPAREN, TokenType.RPAREN);
+    } else {
+      this.skipCommandCondition();
+    }
 
-    this.skipNewlines();
-
-    // Body
+    this.skipNewlinesAndComments();
     const children: ASTNode[] = [];
+
     if (this.currentToken().type === TokenType.LBRACE) {
       const body = this.parseBraceGroup();
       if (body) children.push(body);
-    } else if (this.currentToken().type === TokenType.KEYWORD &&
-               this.currentToken().value === 'then') {
+    } else if (this.currentToken().type === TokenType.KEYWORD && this.currentToken().value === 'then') {
       this.nextToken();
-      // Parse until else/elif/fi
-      while (this.currentToken().type !== TokenType.EOF) {
-        if (this.currentToken().type === TokenType.KEYWORD) {
-          const kw = this.currentToken().value;
-          if (kw === 'else' || kw === 'elif' || kw === 'fi') break;
-        }
-        const stmt = this.parseStatement();
-        if (stmt) children.push(stmt);
-        this.skipNewlines();
-      }
+      this.parseStatementsUntilKeywords(children, ['else', 'elif', 'fi']);
     }
 
-    // else/elif clauses
+    // else/elif
     while (this.currentToken().type === TokenType.KEYWORD) {
       const kw = this.currentToken().value;
       if (kw === 'elif') {
         this.nextToken();
-        this.skipCondition();
-        this.skipNewlines();
+        if (this.currentToken().type === TokenType.LPAREN) {
+          this.skipBalanced(TokenType.LPAREN, TokenType.RPAREN);
+        } else {
+          this.skipCommandCondition();
+        }
+        this.skipNewlinesAndComments();
         if (this.currentToken().type === TokenType.LBRACE) {
           const body = this.parseBraceGroup();
           if (body) children.push(body);
-        } else if (this.currentToken().type === TokenType.KEYWORD &&
-                   this.currentToken().value === 'then') {
+        } else if (this.currentToken().type === TokenType.KEYWORD && this.currentToken().value === 'then') {
           this.nextToken();
         }
       } else if (kw === 'else') {
         this.nextToken();
-        this.skipNewlines();
+        this.skipNewlinesAndComments();
         if (this.currentToken().type === TokenType.LBRACE) {
           const body = this.parseBraceGroup();
           if (body) children.push(body);
@@ -948,118 +888,90 @@ export class YSHParser {
       }
     }
 
-    return {
-      type: 'if_statement',
-      startIndex: start.startIndex,
-      endIndex: this.currentToken().startIndex,
-      children,
-    };
+    return { type: 'if_statement', startIndex: start.startIndex, endIndex: this.currentToken().startIndex, children };
   }
 
   private parseForStatement(): ASTNode {
     const start = this.currentToken();
-    this.expect(TokenType.KEYWORD); // for
+    this.nextToken(); // for
 
-    const varName = this.expect(TokenType.IDENTIFIER).value;
-
-    // in
-    if (this.currentToken().type === TokenType.KEYWORD &&
-        this.currentToken().value === 'in') {
+    let varName = 'unknown';
+    if (this.currentToken().type === TokenType.IDENTIFIER) {
+      varName = this.currentToken().value;
       this.nextToken();
-      this.skipExpression();
     }
 
-    // Optional semicolon
+    if (this.currentToken().type === TokenType.KEYWORD && this.currentToken().value === 'in') {
+      this.nextToken();
+      this.skipYshExpression();
+    }
+
     if (this.currentToken().type === TokenType.SEMICOLON) {
       this.nextToken();
     }
 
-    this.skipNewlines();
-
-    // Body
+    this.skipNewlinesAndComments();
     const children: ASTNode[] = [];
+
     if (this.currentToken().type === TokenType.LBRACE) {
       const body = this.parseBraceGroup();
       if (body) children.push(body);
-    } else if (this.currentToken().type === TokenType.KEYWORD &&
-               this.currentToken().value === 'do') {
+    } else if (this.currentToken().type === TokenType.KEYWORD && this.currentToken().value === 'do') {
       this.nextToken();
-      while (this.currentToken().type !== TokenType.EOF) {
-        if (this.currentToken().type === TokenType.KEYWORD &&
-            this.currentToken().value === 'done') {
-          this.nextToken();
-          break;
-        }
-        const stmt = this.parseStatement();
-        if (stmt) children.push(stmt);
-        this.skipNewlines();
+      this.parseStatementsUntilKeywords(children, ['done']);
+      if (this.currentToken().type === TokenType.KEYWORD && this.currentToken().value === 'done') {
+        this.nextToken();
       }
     }
 
-    return {
-      type: 'for_statement',
-      startIndex: start.startIndex,
-      endIndex: this.currentToken().startIndex,
-      name: varName,
-      children,
-    };
+    return { type: 'for_statement', startIndex: start.startIndex, endIndex: this.currentToken().startIndex, name: varName, children };
   }
 
   private parseWhileStatement(): ASTNode {
     const start = this.currentToken();
     this.nextToken(); // while or until
 
-    this.skipCondition();
-    this.skipNewlines();
+    // Condition: (expr) or command
+    if (this.currentToken().type === TokenType.LPAREN) {
+      this.skipBalanced(TokenType.LPAREN, TokenType.RPAREN);
+    } else {
+      this.skipCommandCondition();
+    }
 
+    this.skipNewlinesAndComments();
     const children: ASTNode[] = [];
+
     if (this.currentToken().type === TokenType.LBRACE) {
       const body = this.parseBraceGroup();
       if (body) children.push(body);
-    } else if (this.currentToken().type === TokenType.KEYWORD &&
-               this.currentToken().value === 'do') {
+    } else if (this.currentToken().type === TokenType.KEYWORD && this.currentToken().value === 'do') {
       this.nextToken();
-      while (this.currentToken().type !== TokenType.EOF) {
-        if (this.currentToken().type === TokenType.KEYWORD &&
-            this.currentToken().value === 'done') {
-          this.nextToken();
-          break;
-        }
-        const stmt = this.parseStatement();
-        if (stmt) children.push(stmt);
-        this.skipNewlines();
+      this.parseStatementsUntilKeywords(children, ['done']);
+      if (this.currentToken().type === TokenType.KEYWORD && this.currentToken().value === 'done') {
+        this.nextToken();
       }
     }
 
-    return {
-      type: 'while_statement',
-      startIndex: start.startIndex,
-      endIndex: this.currentToken().startIndex,
-      children,
-    };
+    return { type: 'while_statement', startIndex: start.startIndex, endIndex: this.currentToken().startIndex, children };
   }
 
   private parseCaseStatement(): ASTNode {
     const start = this.currentToken();
     this.nextToken(); // case
 
-    // Subject
-    this.skipExpression();
-    this.skipNewlines();
+    this.skipYshExpression();
+    this.skipNewlinesAndComments();
 
-    // in or {
-    if (this.currentToken().type === TokenType.KEYWORD &&
-        this.currentToken().value === 'in') {
+    // Skip until esac or }
+    if (this.currentToken().type === TokenType.KEYWORD && this.currentToken().value === 'in') {
       this.nextToken();
     } else if (this.currentToken().type === TokenType.LBRACE) {
       this.nextToken();
     }
 
-    // Skip until esac or }
     let depth = 1;
     while (this.currentToken().type !== TokenType.EOF && depth > 0) {
-      if (this.currentToken().type === TokenType.KEYWORD &&
-          this.currentToken().value === 'esac') {
+      if (this.currentToken().type === TokenType.KEYWORD && this.currentToken().value === 'esac') {
         this.nextToken();
         depth--;
       } else if (this.currentToken().type === TokenType.RBRACE) {
@@ -1070,56 +982,42 @@ export class YSHParser {
       }
     }
 
-    return {
-      type: 'case_statement',
-      startIndex: start.startIndex,
-      endIndex: this.currentToken().startIndex,
-    };
+    return { type: 'case_statement', startIndex: start.startIndex, endIndex: this.currentToken().startIndex };
   }
 
   private parseShellFunction(): ASTNode {
     const start = this.currentToken();
 
-    // Optional function keyword
-    if (this.currentToken().type === TokenType.KEYWORD &&
-        this.currentToken().value === 'function') {
+    if (this.currentToken().type === TokenType.KEYWORD && this.currentToken().value === 'function') {
       this.nextToken();
     }
 
-    const name = this.expect(TokenType.IDENTIFIER).value;
+    let name = 'unknown';
+    if (this.currentToken().type === TokenType.IDENTIFIER) {
+      name = this.currentToken().value;
+      this.nextToken();
+    }
 
-    // Optional ()
     if (this.currentToken().type === TokenType.LPAREN) {
       this.nextToken();
-      this.expect(TokenType.RPAREN);
+      if (this.currentToken().type === TokenType.RPAREN) {
+        this.nextToken();
+      }
     }
 
-    this.skipNewlines();
-
+    this.skipNewlinesAndComments();
     const children: ASTNode[] = [];
     const body = this.parseBraceGroup();
     if (body) children.push(body);
 
-    return {
-      type: 'function_definition',
-      startIndex: start.startIndex,
-      endIndex: this.currentToken().startIndex,
-      name,
-      children,
-    };
+    return { type: 'function_definition', startIndex: start.startIndex, endIndex: this.currentToken().startIndex, name, children };
   }
 
   private parseCallStatement(): ASTNode {
     const start = this.currentToken();
     this.nextToken(); // call
-
-    this.skipExpression();
-
-    return {
-      type: 'call_statement',
-      startIndex: start.startIndex,
-      endIndex: this.currentToken().startIndex,
-    };
+    this.skipYshExpression();
+    return { type: 'call_statement', startIndex: start.startIndex, endIndex: this.currentToken().startIndex };
   }
 
   private parseControlFlow(): ASTNode {
@@ -1127,63 +1025,42 @@ export class YSHParser {
     const keyword = start.value;
     this.nextToken();
 
-    // Optional argument
     if (this.currentToken().type !== TokenType.NEWLINE &&
-        this.currentToken().type !== TokenType.SEMICOLON &&
-        this.currentToken().type !== TokenType.EOF) {
-      this.skipExpression();
+      this.currentToken().type !== TokenType.SEMICOLON &&
+      this.currentToken().type !== TokenType.EOF &&
+      this.currentToken().type !== TokenType.RBRACE) {
+      this.skipYshExpression();
     }
 
-    return {
-      type: 'control_flow',
-      startIndex: start.startIndex,
-      endIndex: this.currentToken().startIndex,
-      value: keyword,
-    };
+    return { type: 'control_flow', startIndex: start.startIndex, endIndex: this.currentToken().startIndex, value: keyword };
   }
 
   private parseExpressionStatement(): ASTNode {
     const start = this.currentToken();
     this.nextToken(); // =
-
-    this.skipExpression();
-
-    return {
-      type: 'expression_statement',
-      startIndex: start.startIndex,
-      endIndex: this.currentToken().startIndex,
-    };
+    this.skipYshExpression();
+    return { type: 'expression_statement', startIndex: start.startIndex, endIndex: this.currentToken().startIndex };
   }
 
   private parseAssignment(): ASTNode {
     const start = this.currentToken();
     const name = start.value;
     this.nextToken(); // identifier
-
     this.nextToken(); // = or +=
 
-    // Value
     if (this.currentToken().type !== TokenType.NEWLINE &&
-        this.currentToken().type !== TokenType.SEMICOLON &&
-        this.currentToken().type !== TokenType.EOF) {
-      this.skipExpression();
+      this.currentToken().type !== TokenType.SEMICOLON &&
+      this.currentToken().type !== TokenType.EOF) {
+      this.skipYshExpression();
     }
 
-    return {
-      type: 'assignment',
-      startIndex: start.startIndex,
-      endIndex: this.currentToken().startIndex,
-      name,
-    };
+    return { type: 'assignment', startIndex: start.startIndex, endIndex: this.currentToken().startIndex, name };
   }
 
   private parseSimpleCommand(): ASTNode | null {
     const start = this.currentToken();
 
-    // Check if we have anything to parse
-    if (start.type === TokenType.NEWLINE ||
-        start.type === TokenType.EOF ||
-        start.type === TokenType.SEMICOLON) {
+    if (start.type === TokenType.NEWLINE || start.type === TokenType.EOF || start.type === TokenType.SEMICOLON) {
       this.nextToken();
       return null;
     }
@@ -1191,21 +1068,24 @@ export class YSHParser {
     const words: string[] = [];
 
     while (this.currentToken().type !== TokenType.EOF &&
-           this.currentToken().type !== TokenType.NEWLINE &&
-           this.currentToken().type !== TokenType.SEMICOLON &&
-           this.currentToken().type !== TokenType.PIPE &&
-           this.currentToken().type !== TokenType.LBRACE &&
-           this.currentToken().type !== TokenType.RBRACE) {
+      this.currentToken().type !== TokenType.NEWLINE &&
+      this.currentToken().type !== TokenType.SEMICOLON &&
+      this.currentToken().type !== TokenType.PIPE &&
+      this.currentToken().type !== TokenType.RBRACE) {
 
-      // Skip control operators
-      if (this.currentToken().type === TokenType.OPERATOR) {
-        const op = this.currentToken().value;
-        if (op === '&&' || op === '||') {
-          break;
-        }
+      const tok = this.currentToken();
+
+      // Stop at && or ||
+      if (tok.type === TokenType.OPERATOR && (tok.value === '&&' || tok.value === '||')) {
+        break;
       }
 
-      words.push(this.currentToken().value);
+      // Stop at { unless it's the first word (brace group)
+      if (tok.type === TokenType.LBRACE && words.length > 0) {
+        break;
+      }
+
+      words.push(tok.value);
       this.nextToken();
     }
 
@@ -1218,12 +1098,7 @@ export class YSHParser {
       startIndex: start.startIndex,
       endIndex: this.currentToken().startIndex,
       name: words[0],
-      children: words.slice(1).map((w, i) => ({
-        type: 'word',
-        startIndex: 0,
-        endIndex: 0,
-        value: w,
-      })),
+      children: words.slice(1).map(w => ({ type: 'word', startIndex: 0, endIndex: 0, value: w })),
     };
   }
 
@@ -1234,74 +1109,64 @@ export class YSHParser {
 
     const start = this.currentToken();
     this.nextToken(); // {
-    this.skipNewlines();
+    this.skipNewlinesAndComments();
 
     const children: ASTNode[] = [];
-    while (this.currentToken().type !== TokenType.RBRACE &&
-           this.currentToken().type !== TokenType.EOF) {
+    let lastIndex = -1;
+
+    while (this.currentToken().type !== TokenType.RBRACE && this.currentToken().type !== TokenType.EOF) {
+      this.checkIterations('parseBraceGroup');
+
+      // Detect stuck parser
+      if (this.tokenIndex === lastIndex) {
+        this.nextToken(); // Force progress
+        continue;
+      }
+      lastIndex = this.tokenIndex;
+
       const stmt = this.parseStatement();
       if (stmt) children.push(stmt);
-      this.skipNewlines();
+      this.skipNewlinesAndComments();
     }
 
-    this.expect(TokenType.RBRACE);
-
-    return {
-      type: 'brace_group',
-      startIndex: start.startIndex,
-      endIndex: this.currentToken().startIndex,
-      children,
-    };
-  }
-
-  private skipCondition(): void {
-    // Skip parenthesized expression or command list
-    if (this.currentToken().type === TokenType.LPAREN) {
-      let depth = 1;
+    if (this.currentToken().type === TokenType.RBRACE) {
       this.nextToken();
-      while (this.currentToken().type !== TokenType.EOF && depth > 0) {
-        if (this.currentToken().type === TokenType.LPAREN) depth++;
-        else if (this.currentToken().type === TokenType.RPAREN) depth--;
-        this.nextToken();
-      }
-    } else {
-      // Command list until ; or { or newline
-      while (this.currentToken().type !== TokenType.EOF &&
-             this.currentToken().type !== TokenType.SEMICOLON &&
-             this.currentToken().type !== TokenType.LBRACE &&
-             this.currentToken().type !== TokenType.NEWLINE) {
-        if (this.currentToken().type === TokenType.KEYWORD &&
-            (this.currentToken().value === 'then' ||
-             this.currentToken().value === 'do')) {
-          break;
-        }
-        this.nextToken();
-      }
     }
+
+    return { type: 'brace_group', startIndex: start.startIndex, endIndex: this.currentToken().startIndex, children };
   }
 
-  private skipExpression(): void {
+  // Skip a YSH expression - handles { } as dict literals, not brace groups
+  private skipYshExpression(): void {
     let parenDepth = 0;
     let bracketDepth = 0;
     let braceDepth = 0;
+    const maxIter = 10000;
+    let iter = 0;
 
-    while (this.currentToken().type !== TokenType.EOF) {
-      const token = this.currentToken();
+    while (this.currentToken().type !== TokenType.EOF && iter < maxIter) {
+      iter++;
+      const tok = this.currentToken();
 
-      if (token.type === TokenType.LPAREN) parenDepth++;
-      else if (token.type === TokenType.RPAREN) parenDepth--;
-      else if (token.type === TokenType.LBRACKET) bracketDepth++;
-      else if (token.type === TokenType.RBRACKET) bracketDepth--;
-      else if (token.type === TokenType.LBRACE) braceDepth++;
-      else if (token.type === TokenType.RBRACE) braceDepth--;
-
-      if (parenDepth < 0 || bracketDepth < 0 || braceDepth < 0) {
-        break;
+      if (tok.type === TokenType.LPAREN) parenDepth++;
+      else if (tok.type === TokenType.RPAREN) {
+        parenDepth--;
+        if (parenDepth < 0) break;
+      }
+      else if (tok.type === TokenType.LBRACKET) bracketDepth++;
+      else if (tok.type === TokenType.RBRACKET) {
+        bracketDepth--;
+        if (bracketDepth < 0) break;
+      }
+      else if (tok.type === TokenType.LBRACE) braceDepth++;
+      else if (tok.type === TokenType.RBRACE) {
+        braceDepth--;
+        if (braceDepth < 0) break;
       }
 
+      // At depth 0, newline/semicolon ends expression
       if (parenDepth === 0 && bracketDepth === 0 && braceDepth === 0) {
-        if (token.type === TokenType.NEWLINE ||
-            token.type === TokenType.SEMICOLON) {
+        if (tok.type === TokenType.NEWLINE || tok.type === TokenType.SEMICOLON) {
           break;
         }
       }
@@ -1309,5 +1174,81 @@ export class YSHParser {
       this.nextToken();
     }
   }
-}
 
+  private skipExpressionUntil(stopTokens: TokenType[]): void {
+    let parenDepth = 0;
+    let bracketDepth = 0;
+    let braceDepth = 0;
+    const maxIter = 10000;
+    let iter = 0;
+
+    while (this.currentToken().type !== TokenType.EOF && iter < maxIter) {
+      iter++;
+      const tok = this.currentToken();
+
+      if (parenDepth === 0 && bracketDepth === 0 && braceDepth === 0) {
+        if (stopTokens.includes(tok.type)) break;
+      }
+
+      if (tok.type === TokenType.LPAREN) parenDepth++;
+      else if (tok.type === TokenType.RPAREN) parenDepth--;
+      else if (tok.type === TokenType.LBRACKET) bracketDepth++;
+      else if (tok.type === TokenType.RBRACKET) bracketDepth--;
+      else if (tok.type === TokenType.LBRACE) braceDepth++;
+      else if (tok.type === TokenType.RBRACE) braceDepth--;
+
+      this.nextToken();
+    }
+  }
+
+  private skipBalanced(open: TokenType, close: TokenType): void {
+    let depth = 1;
+    this.nextToken();
+    const maxIter = 10000;
+    let iter = 0;
+    while (this.currentToken().type !== TokenType.EOF && depth > 0 && iter < maxIter) {
+      iter++;
+      if (this.currentToken().type === open) depth++;
+      else if (this.currentToken().type === close) depth--;
+      this.nextToken();
+    }
+  }
+
+  private skipCommandCondition(): void {
+    const maxIter = 10000;
+    let iter = 0;
+    while (iter < maxIter &&
+      this.currentToken().type !== TokenType.EOF &&
+      this.currentToken().type !== TokenType.SEMICOLON &&
+      this.currentToken().type !== TokenType.LBRACE &&
+      this.currentToken().type !== TokenType.NEWLINE) {
+      iter++;
+      if (this.currentToken().type === TokenType.KEYWORD &&
+        (this.currentToken().value === 'then' || this.currentToken().value === 'do')) {
+        break;
+      }
+      this.nextToken();
+    }
+  }
+
+  private parseStatementsUntilKeywords(children: ASTNode[], keywords: string[]): void {
+    let lastIndex = -1;
+    while (this.currentToken().type !== TokenType.EOF) {
+      this.checkIterations('parseStatementsUntilKeywords');
+
+      // Detect stuck parser
+      if (this.tokenIndex === lastIndex) {
+        this.nextToken(); // Force progress
+        continue;
+      }
+      lastIndex = this.tokenIndex;
+
+      if (this.currentToken().type === TokenType.KEYWORD && keywords.includes(this.currentToken().value)) {
+        break;
+      }
+      const stmt = this.parseStatement();
+      if (stmt) children.push(stmt);
+      this.skipNewlinesAndComments();
+    }
+  }
+}

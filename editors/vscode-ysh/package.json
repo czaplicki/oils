@@ -121,6 +121,14 @@
       {
         "command": "ysh.showParseTree",
         "title": "YSH: Show Parse Tree"
+      },
+      {
+        "command": "ysh.showDebugInfo",
+        "title": "YSH: Show Debug Info"
+      },
+      {
+        "command": "ysh.showSymbols",
+        "title": "YSH: Show Symbols"
       }
     ],
     "snippets": [
