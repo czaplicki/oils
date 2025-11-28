@@ -118,7 +118,6 @@ for item in (items) {
 
 - [Oils Shell](https://www.oilshell.org/) - The Oils project homepage
 - [YSH Language Tour](https://www.oilshell.org/release/latest/doc/ysh-tour.html)
-- [tree-sitter-ysh](./tree-sitter-ysh/) - Tree-sitter grammar for YSH
 
 ## Contributing
 

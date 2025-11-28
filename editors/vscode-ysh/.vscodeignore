@@ -2,8 +2,6 @@
 .vscode-test/**
 src/**
 server/src/**
-tree-sitter-ysh/src/**
-tree-sitter-ysh/bindings/**
 **/*.ts
 **/*.map
 .gitignore
@@ -11,5 +9,12 @@ tree-sitter-ysh/bindings/**
 **/*.tsbuildinfo
 node_modules/**
 server/node_modules/**
-tree-sitter-ysh/node_modules/**
+.direnv/**
+.envrc
+flake.nix
+flake.lock
+**/__tests__/**
+**/jest.config.js
+# Tree-sitter is not yet integrated - exclude from package
+tree-sitter-ysh/**
 

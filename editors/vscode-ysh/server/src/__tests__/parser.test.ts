@@ -464,11 +464,11 @@ describe('Source Path Resolution', () => {
     test('resolveSourcePath expands $_this_dir', () => {
         // Simulate a document URI
         const docUri = 'file:///home/user/project/scripts/main.ysh';
-        
+
         // Source path with $_this_dir
         const sourcePath = '$_this_dir/lib/config.ysh';
         const resolved = resolveSourcePath(sourcePath, docUri);
-        
+
         // It should try to resolve to /home/user/project/scripts/lib/config.ysh
         // (won't exist, so returns null, but the expansion should happen)
         console.log('Resolved path:', resolved);
@@ -479,10 +479,10 @@ describe('Source Path Resolution', () => {
         // Use the actual fixtures directory
         const fixturesDir = path.join(__dirname, 'fixtures');
         const caddyUri = `file://${path.join(fixturesDir, 'caddy.ysh')}`;
-        
+
         const resolved = resolveSourcePath('lib/config.ysh', caddyUri);
         console.log('Resolved lib/config.ysh from caddy.ysh:', resolved);
-        
+
         // Should resolve to the actual fixture file
         expect(resolved).not.toBeNull();
         expect(resolved).toContain('lib/config.ysh');

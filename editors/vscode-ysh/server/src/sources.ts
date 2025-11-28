@@ -81,7 +81,7 @@ export function resolveSourcePath(sourcePath: string, documentUri: string): stri
 
 /**
  * Expand common shell variables in source paths.
- * 
+ *
  * Supported variables:
  * - $_this_dir -> directory containing the current script
  * - $BUN_SCRIPT_DIR -> same as $_this_dir (common pattern)
@@ -89,15 +89,15 @@ export function resolveSourcePath(sourcePath: string, documentUri: string): stri
  */
 function expandShellVariables(sourcePath: string, docDir: string): string {
   let expanded = sourcePath;
-  
+
   // Replace $_this_dir and variations (YSH convention for script directory)
   expanded = expanded.replace(/\$\{?_this_dir\}?/g, docDir);
   expanded = expanded.replace(/\$\{?BUN_SCRIPT_DIR\}?/g, docDir);
-  
+
   // Handle $0 directory pattern (dirname of script)
   // This is less common but sometimes used
   expanded = expanded.replace(/\$\(dirname\s+\$0\)/g, docDir);
-  
+
   // If path still contains $ it has unexpanded variables - skip those parts
   // and try to find a resolvable suffix
   if (expanded.includes('$')) {
@@ -107,7 +107,7 @@ function expandShellVariables(sourcePath: string, docDir: string): string {
       expanded = match[1];
     }
   }
-  
+
   return expanded;
 }
 
