@@ -55,7 +55,7 @@
 
           src = ./server; 
 
-          npmDepsHash = "sha256-OyAHp1Vs9FJ49qAtbpdBifWp1Lzb1YZiLVi68TDf+J4=";
+          npmDepsHash = "sha256-w5qOomioQU1aqpcRxODE485/1WunxewDs9Awoiw/kl0=";
 
           nativeBuildInputs = [ pkgs.makeWrapper ];
 
