@@ -48,6 +48,36 @@
           '';
         };
 
+        # Package for the lsp server
+        packages.ysh-lsp = pkgs.buildNpmPackage {
+          pname = "ysh-lsp";
+          version = "0.1.0";
+
+          src = ./server; 
+
+          npmDepsHash = "sha256-OyAHp1Vs9FJ49qAtbpdBifWp1Lzb1YZiLVi68TDf+J4=";
+
+          nativeBuildInputs = [ pkgs.makeWrapper ];
+
+          buildPhase = ''
+            npm run compile
+          '';
+
+          installPhase = ''
+            # 1. Create a private 'lib' directory in the store
+            mkdir -p $out/lib/ysh-lsp
+    
+            # 2. Copy the compiled JS (the 'out' folder) and the runtime node_modules
+            # We copy the whole 'out' folder to keep relative imports working
+            cp -r out node_modules package.json $out/lib/ysh-lsp/
+
+            # 3. Create the binary wrapper
+            # This points to the entry point while ensuring it runs from the lib dir
+            makeWrapper ${pkgs.nodejs}/bin/node $out/bin/ysh-lsp \
+              --add-flags "$out/lib/ysh-lsp/out/server.js --stdio"
+          '';
+        };
+
         # Package for the tree-sitter grammar
         packages.tree-sitter-ysh = pkgs.stdenv.mkDerivation {
           pname = "tree-sitter-ysh";
